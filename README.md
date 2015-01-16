@@ -1,6 +1,7 @@
 Installing with mod_mam:
-1. Install MongoDB  http://docs.mongodb.org/manual/
-2. Install dep
+-   Install MongoDB  http://docs.mongodb.org/manual/
+-   Install dependencies
+``` bash
   $ git clone git://github.com/TonyGen/bson-erlang.git bson
   $ git clone git://github.com/DarkSideF/mongodb-erlang.git mongodb
   $ cd bson
@@ -10,22 +11,29 @@ Installing with mod_mam:
   $ cd ..
   $ sudo cp -rf bson /usr/lib/erlang/lib/bson-0.1.3
   $ sudo cp -rf mongodb /usr/lib/erlang/lib/mongodb-0.3.1
+```
 
-3. Install ejabberd
+-   Install ejabberd
+``` bash
   $ git clone git://github.com/DarkSideF/ejabberd.git
   $ cd ejabberd
   $ git checkout origin/mod_mam -b mod_mam
   $ ./configure --enable-mongodb
   $ make
   $ sudo make install
+```
 
-4. Add config for mod_mam like:
-    modules:
-      mod_mam:
-        mongo:
-          localhost: 27017
-        mongo_database: test
-        mongo_collection: messages
+-   Add config for mod_mam like:
+``` yaml
+modules:
+  mod_mam:
+    mongo:
+      localhost: 27017
+    mongo_database: test
+    mongo_collection: messages
+```
+
+mod_mam source: `https://github.com/kongo2002/ejabberd-mod-mam`
 
 Ejabberd Community Edition, by ProcessOne
 -----------------------------------------

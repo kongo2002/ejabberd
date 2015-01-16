@@ -21,12 +21,12 @@ CTL="$DIR"/ejabberdctl
 USER=@installuser@
 
 test -x "$CTL" || {
-	echo "ERROR: ejabberd not found: $DIR"
-	exit 1
+    echo "ERROR: ejabberd not found: $DIR"
+    exit 1
 }
 getent passwd "$USER" >/dev/null || {
-	echo "ERROR: System user not found: $USER"
-	exit 2
+    echo "ERROR: System user not found: $USER"
+    exit 2
 }
 
 export PATH="${PATH:+$PATH:}/usr/sbin:/sbin"
