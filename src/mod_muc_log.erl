@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -147,7 +146,13 @@ init([Host, Opts]) ->
                                     (plaintext) -> plaintext
                                  end, html),
     FilePermissions = gen_mod:get_opt(file_permissions, Opts,
-                                 fun({A, B}) -> {A, B}
+                                 fun(SubOpts) ->
+                                         F = fun({mode, Mode}, {_M, G}) ->
+                                                        {Mode, G};
+                                                ({group, Group}, {M, _G}) ->
+                                                        {M, Group}
+                                             end,
+                                         lists:foldl(F, {644, 33}, SubOpts)
                                  end, {644, 33}),
     CSSFile = gen_mod:get_opt(cssfile, Opts,
                               fun iolist_to_binary/1,
@@ -234,16 +239,22 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %%% Internal functions
 %%--------------------------------------------------------------------
 add_to_log2(text, {Nick, Packet}, Room, Opts, State) ->
-    case {xml:get_subtag(Packet, <<"subject">>),
-	  xml:get_subtag(Packet, <<"body">>)}
+    case {xml:get_subtag(Packet, <<"no-store">>),
+	  xml:get_subtag(Packet, <<"no-permanent-store">>)}
 	of
-      {false, false} -> ok;
-      {false, SubEl} ->
-	  Message = {body, xml:get_tag_cdata(SubEl)},
-	  add_message_to_log(Nick, Message, Room, Opts, State);
-      {SubEl, _} ->
-	  Message = {subject, xml:get_tag_cdata(SubEl)},
-	  add_message_to_log(Nick, Message, Room, Opts, State)
+      {false, false} ->
+	  case {xml:get_subtag(Packet, <<"subject">>),
+		xml:get_subtag(Packet, <<"body">>)}
+	      of
+	    {false, false} -> ok;
+	    {false, SubEl} ->
+		Message = {body, xml:get_tag_cdata(SubEl)},
+		add_message_to_log(Nick, Message, Room, Opts, State);
+	    {SubEl, _} ->
+		Message = {subject, xml:get_tag_cdata(SubEl)},
+		add_message_to_log(Nick, Message, Room, Opts, State)
+	  end;
+      {_, _} -> ok
     end;
 add_to_log2(roomconfig_change, _Occupants, Room, Opts,
 	    State) ->
@@ -566,16 +577,7 @@ get_dateweek(Date, Lang) ->
       end).
 
 make_dir_rec(Dir) ->
-    DirS = binary_to_list(Dir),
-    case file:read_file_info(DirS) of
-      {ok, _} -> ok;
-      {error, enoent} ->
-	  DirL = [list_to_binary(F) || F <- filename:split(DirS)],
-	  DirR = lists:sublist(DirL, length(DirL) - 1),
-	  make_dir_rec(fjoin(DirR)),
-	  file:make_dir(DirS),
-	  file:change_mode(DirS, 8#00755) % -rwxr-xr-x
-    end.
+    filelib:ensure_dir(<<Dir/binary, $/>>).
 
 %% {ok, F1}=file:open("valid-xhtml10.png", [read]).
 %% {ok, F1b}=file:read(F1, 1000000).
@@ -780,7 +782,7 @@ fw(F, S, O, FileFormat) ->
 		 S1y = ejabberd_regexp:greplace(S1x, ?PLAINTEXT_IN, <<"<">>),
 		 ejabberd_regexp:greplace(S1y, ?PLAINTEXT_OUT, <<">">>)
 	 end,
-    io:format(F, S2, []).
+    file:write(F, S2).
 
 put_header(_, _, _, _, _, _, _, _, _, plaintext) -> ok;
 put_header(F, Room, Date, CSSFile, Lang, Hour_offset,
@@ -1017,7 +1019,9 @@ htmlize2(S1, NoFollow) ->
 				  <<"\\&nbsp;\\&nbsp;">>),
     S7 = ejabberd_regexp:greplace(S6, <<"\\t">>,
 				  <<"\\&nbsp;\\&nbsp;\\&nbsp;\\&nbsp;">>),
-    ejabberd_regexp:greplace(S7, <<226, 128, 174>>,
+    S8 = ejabberd_regexp:greplace(S7, <<"~">>,
+				  <<"~~">>),
+    ejabberd_regexp:greplace(S8, <<226, 128, 174>>,
 			     <<"[RLO]">>).
 
 link_regexp(false) -> <<"<a href=\"&\">&</a>">>;
@@ -1241,5 +1245,6 @@ calc_hour_offset(TimeHere) ->
 	  3600,
     TimeHereHour - TimeZeroHour.
 
+fjoin([]) -> <<"/">>;
 fjoin(FileList) ->
     list_to_binary(filename:join([binary_to_list(File) || File <- FileList])).

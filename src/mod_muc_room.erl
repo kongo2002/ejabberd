@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -128,6 +127,13 @@ init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick, D
 				   just_created = true,
 				   room_shaper = Shaper}),
     State1 = set_opts(DefRoomOpts, State),
+    if (State1#state.config)#config.persistent ->
+	   mod_muc:store_room(State1#state.server_host,
+			      State1#state.host,
+			      State1#state.room,
+			      make_opts(State1));
+       true -> ok
+    end,
     ?INFO_MSG("Created MUC room ~s@~s by ~s", 
 	      [Room, Host, jlib:jid_to_string(Creator)]),
     add_to_log(room_existence, created, State1),
@@ -168,7 +174,7 @@ normal_state({route, From, <<"">>,
 		Now = now_to_usec(now()),
 		MinMessageInterval =
 		    trunc(gen_mod:get_module_opt(StateData#state.server_host,
-						 mod_muc, min_message_interval, fun(MMI) when is_integer(MMI) -> MMI end, 0)
+						 mod_muc, min_message_interval, fun(MMI) when is_number(MMI) -> MMI end, 0)
                           * 1000000),
 		Size = element_size(Packet),
 		{MessageShaper, MessageShaperInterval} =
@@ -246,7 +252,7 @@ normal_state({route, From, <<"">>,
 		      NewState = expulse_participant(Packet, From, StateData,
 						     translate:translate(Lang,
 									 ErrorText)),
-		      {next_state, normal_state, NewState};
+		      close_room_if_temporary_and_empty(NewState);
 		  _ -> {next_state, normal_state, StateData}
 		end;
 	    <<"chat">> ->
@@ -419,12 +425,13 @@ normal_state({route, From, <<"">>,
 	     StateData) ->
     case jlib:iq_query_info(Packet) of
       #iq{type = Type, xmlns = XMLNS, lang = Lang,
-	  sub_el = SubEl} =
+	  sub_el = #xmlel{name = SubElName} = SubEl} =
 	  IQ
 	  when (XMLNS == (?NS_MUC_ADMIN)) or
 		 (XMLNS == (?NS_MUC_OWNER))
 		 or (XMLNS == (?NS_DISCO_INFO))
 		 or (XMLNS == (?NS_DISCO_ITEMS))
+	         or (XMLNS == (?NS_VCARD))
 		 or (XMLNS == (?NS_CAPTCHA)) ->
 	  Res1 = case XMLNS of
 		   ?NS_MUC_ADMIN ->
@@ -435,6 +442,8 @@ normal_state({route, From, <<"">>,
 		       process_iq_disco_info(From, Type, Lang, StateData);
 		   ?NS_DISCO_ITEMS ->
 		       process_iq_disco_items(From, Type, Lang, StateData);
+		   ?NS_VCARD ->
+		       process_iq_vcard(From, Type, Lang, SubEl, StateData);
 		   ?NS_CAPTCHA ->
 		       process_iq_captcha(From, Type, Lang, SubEl, StateData)
 		 end,
@@ -442,7 +451,7 @@ normal_state({route, From, <<"">>,
 				    {result, Res, SD} ->
 					{IQ#iq{type = result,
 					       sub_el =
-						   [#xmlel{name = <<"query">>,
+						   [#xmlel{name = SubElName,
 							   attrs =
 							       [{<<"xmlns">>,
 								 XMLNS}],
@@ -1124,14 +1133,17 @@ process_presence(From, Nick,
 		       end;
 		   _ -> StateData
 		 end,
+    close_room_if_temporary_and_empty(StateData1).
+
+close_room_if_temporary_and_empty(StateData1) ->
     case not (StateData1#state.config)#config.persistent
 	   andalso (?DICT):to_list(StateData1#state.users) == []
 	of
       true ->
 	  ?INFO_MSG("Destroyed MUC room ~s because it's temporary "
 		    "and empty",
-		    [jlib:jid_to_string(StateData#state.jid)]),
-	  add_to_log(room_existence, destroyed, StateData),
+		    [jlib:jid_to_string(StateData1#state.jid)]),
+	  add_to_log(room_existence, destroyed, StateData1),
 	  {stop, normal, StateData1};
       _ -> {next_state, normal_state, StateData1}
     end.
@@ -1505,15 +1517,17 @@ get_user_activity(JID, StateData) ->
 
 store_user_activity(JID, UserActivity, StateData) ->
     MinMessageInterval =
-	gen_mod:get_module_opt(StateData#state.server_host,
-			       mod_muc, min_message_interval,
-                               fun(I) when is_integer(I), I>=0 -> I end,
-                               0),
+	trunc(gen_mod:get_module_opt(StateData#state.server_host,
+				     mod_muc, min_message_interval,
+				     fun(I) when is_number(I), I>=0 -> I end,
+				     0)
+	      * 1000),
     MinPresenceInterval =
-	gen_mod:get_module_opt(StateData#state.server_host,
-			       mod_muc, min_presence_interval,
-                               fun(I) when is_integer(I), I>=0 -> I end,
-                               0),
+	trunc(gen_mod:get_module_opt(StateData#state.server_host,
+				     mod_muc, min_presence_interval,
+				     fun(I) when is_number(I), I>=0 -> I end,
+				     0)
+	      * 1000),
     Key = jlib:jid_tolower(JID),
     Now = now_to_usec(now()),
     Activity1 = clean_treap(StateData#state.activity,
@@ -1544,8 +1558,8 @@ store_user_activity(JID, UserActivity, StateData) ->
 					       100000),
 			     Delay = lists:max([MessageShaperInterval,
 						PresenceShaperInterval,
-						MinMessageInterval * 1000,
-						MinPresenceInterval * 1000])
+						MinMessageInterval,
+						MinPresenceInterval])
 				       * 1000,
 			     Priority = {1, -(Now + Delay)},
 			     StateData#state{activity =
@@ -2424,24 +2438,21 @@ add_message_to_history(FromNick, FromJID, Packet, StateData) ->
 		    false -> false;
 		    _ -> true
 		  end,
-    TimeStamp = calendar:now_to_universal_time(now()),
+    TimeStamp = now(),
     SenderJid = case
 		  (StateData#state.config)#config.anonymous
 		    of
 		  true -> StateData#state.jid;
 		  false -> FromJID
 		end,
-    TSPacket = xml:append_subtags(Packet,
-				  [jlib:timestamp_to_xml(TimeStamp, utc,
-							 SenderJid, <<"">>),
-				   jlib:timestamp_to_xml(TimeStamp)]),
+    TSPacket = jlib:add_delay_info(Packet, SenderJid, TimeStamp),
     SPacket =
 	jlib:replace_from_to(jlib:jid_replace_resource(StateData#state.jid,
 						       FromNick),
 			     StateData#state.jid, TSPacket),
     Size = element_size(SPacket),
     Q1 = lqueue_in({FromNick, TSPacket, HaveSubject,
-		    TimeStamp, Size},
+		    calendar:now_to_universal_time(TimeStamp), Size},
 		   StateData#state.history),
     add_to_log(text, {FromNick, Packet}, StateData),
     StateData#state{history = Q1}.
@@ -3895,6 +3906,10 @@ set_opts([{Opt, Val} | Opts], StateData) ->
 		StateData#state{config =
 				    (StateData#state.config)#config{max_users =
 									MaxUsers}};
+	    vcard ->
+		StateData#state{config =
+				    (StateData#state.config)#config{vcard =
+									Val}};
 	    affiliations ->
 		StateData#state{affiliations = (?DICT):from_list(Val)};
 	    subject -> StateData#state{subject = Val};
@@ -3927,6 +3942,7 @@ make_opts(StateData) ->
      ?MAKE_CONFIG_OPT(logging), ?MAKE_CONFIG_OPT(max_users),
      ?MAKE_CONFIG_OPT(allow_voice_requests),
      ?MAKE_CONFIG_OPT(voice_request_min_interval),
+     ?MAKE_CONFIG_OPT(vcard),
      {captcha_whitelist,
       (?SETS):to_list((StateData#state.config)#config.captcha_whitelist)},
      {affiliations,
@@ -3992,6 +4008,8 @@ process_iq_disco_info(_From, get, Lang, StateData) ->
 		  {<<"type">>, <<"text">>},
 		  {<<"name">>, get_title(StateData)}],
 	     children = []},
+      #xmlel{name = <<"feature">>,
+	     attrs = [{<<"var">>, ?NS_VCARD}], children = []},
       #xmlel{name = <<"feature">>,
 	     attrs = [{<<"var">>, ?NS_MUC}], children = []},
       ?CONFIG_OPT_TO_FEATURE((Config#config.public),
@@ -4063,6 +4081,26 @@ process_iq_captcha(_From, set, _Lang, SubEl,
     case ejabberd_captcha:process_reply(SubEl) of
       ok -> {result, [], StateData};
       _ -> {error, ?ERR_NOT_ACCEPTABLE}
+    end.
+
+process_iq_vcard(_From, get, _Lang, _SubEl, StateData) ->
+    #state{config = #config{vcard = VCardRaw}} = StateData,
+    case xml_stream:parse_element(VCardRaw) of
+	#xmlel{children = VCardEls} ->
+	    {result, VCardEls, StateData};
+	{error, _} ->
+	    {result, [], StateData}
+    end;
+process_iq_vcard(From, set, Lang, SubEl, StateData) ->
+    case get_affiliation(From, StateData) of
+	owner ->
+	    VCardRaw = xml:element_to_binary(SubEl),
+	    Config = StateData#state.config,
+	    NewConfig = Config#config{vcard = VCardRaw},
+	    change_config(NewConfig, StateData);
+	_ ->
+	    ErrText = <<"Owner privileges required">>,
+	    {error, ?ERRT_FORBIDDEN(Lang, ErrText)}
     end.
 
 get_title(StateData) ->

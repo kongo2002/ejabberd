@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -49,16 +48,11 @@
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
+-include("ejabberd_http.hrl").
 
 -include("jlib.hrl").
 
 -include_lib("kernel/include/file.hrl").
-
-%%-include("ejabberd_http.hrl").
-%% TODO: When ejabberd-modules SVN gets the new ejabberd_http.hrl, delete this code:
--record(request,
-	{method, path, q = [], us, auth, lang = <<"">>,
-	 data = <<"">>, ip, host, port, tp, headers}).
 
 -record(state,
 	{host, docroot, accesslog, accesslogfd,

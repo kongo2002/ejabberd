@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -94,9 +93,15 @@ start() ->
 ).
 
 register_mechanism(Mechanism, Module, PasswordType) ->
-    ets:insert(sasl_mechanism,
-	       #sasl_mechanism{mechanism = Mechanism, module = Module,
-			       password_type = PasswordType}).
+    case is_disabled(Mechanism) of
+      false ->
+	  ets:insert(sasl_mechanism,
+		     #sasl_mechanism{mechanism = Mechanism, module = Module,
+				     password_type = PasswordType});
+      true ->
+	  ?DEBUG("SASL mechanism ~p is disabled", [Mechanism]),
+	  true
+    end.
 
 %%% TODO: use callbacks
 %%-include("ejabberd.hrl").
@@ -216,3 +221,19 @@ filter_anonymous(Host, Mechs) ->
       true  -> Mechs;
       false -> Mechs -- [<<"ANONYMOUS">>]
     end.
+
+-spec(is_disabled/1 ::
+(
+  Mechanism :: mechanism())
+    -> boolean()
+).
+
+is_disabled(Mechanism) ->
+    Disabled = ejabberd_config:get_option(
+		 disable_sasl_mechanisms,
+		 fun(V) when is_list(V) ->
+			 lists:map(fun(M) -> str:to_upper(M) end, V);
+		    (V) ->
+			 [str:to_upper(V)]
+		 end, []),
+    lists:member(Mechanism, Disabled).

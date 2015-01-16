@@ -66,11 +66,14 @@
 \newcommand{\module}[1]{\texttt{#1}}
 \newcommand{\modadhoc}{\module{mod\_adhoc}}
 \newcommand{\modannounce}{\module{mod\_announce}}
+\newcommand{\modclientstate}{\module{mod\_client\_state}}
 \newcommand{\modblocking}{\module{mod\_blocking}}
 \newcommand{\modcaps}{\module{mod\_caps}}
+\newcommand{\modcarboncopy}{\module{mod\_carboncopy}}
 \newcommand{\modconfigure}{\module{mod\_configure}}
 \newcommand{\moddisco}{\module{mod\_disco}}
 \newcommand{\modecho}{\module{mod\_echo}}
+\newcommand{\modfailban}{\module{mod\_fail2ban}}
 \newcommand{\modhttpbind}{\module{mod\_http\_bind}}
 \newcommand{\modhttpfileserver}{\module{mod\_http\_fileserver}}
 \newcommand{\modirc}{\module{mod\_irc}}
@@ -92,6 +95,7 @@
 \newcommand{\modsharedroster}{\module{mod\_shared\_roster}}
 \newcommand{\modsharedrosterldap}{\module{mod\_shared\_roster\_ldap}}
 \newcommand{\modsic}{\module{mod\_sic}}
+\newcommand{\modsip}{\module{mod\_sip}}
 \newcommand{\modstats}{\module{mod\_stats}}
 \newcommand{\modtime}{\module{mod\_time}}
 \newcommand{\modvcard}{\module{mod\_vcard}}
@@ -320,13 +324,12 @@ To compile \ejabberd{} on a `Unix-like' operating system, you need:
 \item GCC
 \item Libexpat 1.95 or higher
 \item Erlang/OTP R15B or higher.
-\item Libyaml 1.4 or higher
+\item Libyaml 0.1.4 or higher
 \item OpenSSL 0.9.8 or higher, for STARTTLS, SASL and SSL encryption.
 \item Zlib 1.2.3 or higher, for Stream Compression support (\xepref{0138}). Optional.
 \item PAM library. Optional. For Pluggable Authentication Modules (PAM). See section \ref{pam}.
 \item GNU Iconv 1.8 or higher, for the IRC Transport (mod\_irc). Optional. Not needed on systems with GNU Libc. See section \ref{modirc}.
 \item ImageMagick's Convert program. Optional. For CAPTCHA challenges. See section \ref{captcha}.
-\item exmpp 0.9.6 or higher. Optional. For import/export user data with \xepref{0227} XML files.
 \end{itemize}
 
 \makesubsection{download}{Download Source Code}
@@ -394,9 +397,6 @@ Some options that you may be interested in modifying:
 
         \titem{--enable-zlib}
         Enable Stream Compression (XEP-0138) using zlib.
-
-        \titem{--enable-stun}
-        Enable STUN support (see section \ref{stun}).
 
         \titem{--enable-iconv}
         Enable iconv support. This is needed for \term{mod\_irc} (see seciont \ref{modirc}).
@@ -869,10 +869,12 @@ The available modules, their purpose and the options allowed by each one are:
 \begin{description}
   \titem{\texttt{ejabberd\_c2s}}
     Handles c2s connections.\\
-    Options: \texttt{access}, \texttt{certfile}, \texttt{ciphers},
-    \texttt{max\_fsm\_queue},
-    \texttt{max\_stanza\_size}, \texttt{shaper},
-    \texttt{starttls}, \texttt{starttls\_required}, \texttt{tls},
+    Options: \texttt{access}, \texttt{certfile}, \texttt{ciphers}, \texttt{protocol\_options}
+    \texttt{max\_ack\_queue}, \texttt{max\_fsm\_queue},
+    \texttt{max\_stanza\_size}, \texttt{resend\_on\_timeout},
+    \texttt{resume\_timeout}, \texttt{shaper},
+    \texttt{starttls}, \texttt{starttls\_required},
+    \texttt{stream\_management}, \texttt{tls},
     \texttt{zlib}, \texttt{tls\_compression}
   \titem{\texttt{ejabberd\_s2s\_in}}
     Handles incoming s2s connections.\\
@@ -882,10 +884,18 @@ The available modules, their purpose and the options allowed by each one are:
     (as defined in the Jabber Component Protocol (\xepref{0114}).\\
     Options: \texttt{access}, \texttt{hosts}, \texttt{max\_fsm\_queue},
     \texttt{service\_check\_from}, \texttt{shaper\_rule}
+  \titem{\texttt{ejabberd\_sip}}
+    Handles SIP requests as defined in
+    \footahref{http://tools.ietf.org/html/rfc3261}{RFC 3261}.\\
+    Options: \texttt{certfile}, \texttt{tls}
   \titem{\texttt{ejabberd\_stun}}
-    Handles STUN Binding requests as defined in
-    \footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389}.\\
-    Options: \texttt{certfile}
+    Handles STUN/TURN requests as defined in
+    \footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389} and
+    \footahref{http://tools.ietf.org/html/rfc5766}{RFC 5766}.\\
+    Options: \texttt{certfile}, \texttt{tls}, \texttt{use\_turn}, \texttt{turn\_ip},
+    \texttt{turn\_port\_range}, \texttt{turn\_max\_allocations},
+    \texttt{turn\_max\_permissions}, \texttt{shaper}, \texttt{server\_name},
+    \texttt{auth\_realm}, \texttt{auth\_type}
   \titem{\texttt{ejabberd\_http}}
     Handles incoming HTTP connections.\\
     Options: \texttt{captcha}, \texttt{certfile}, \texttt{default\_host}, \texttt{http\_bind}, \texttt{http\_poll},
@@ -895,7 +905,7 @@ The available modules, their purpose and the options allowed by each one are:
     Options: \texttt{access\_commands}, \texttt{maxsessions}, \texttt{timeout}.\\
     You can find option explanations, example configuration in old and new format,
     and example calls in several languages in the old
-    \footahref{https://raw.github.com/processone/ejabberd-contrib/master/ejabberd\_xmlrpc/README.txt}{ejabberd\_xmlrpc README.txt}
+    \footahref{http://www.ejabberd.im/ejabberd\_xmlrpc}{ejabberd\_xmlrpc documentation}.
 \end{description}
 
 
@@ -917,6 +927,12 @@ This is a detailed description of each option allowed by the listening modules:
     To define a certificate file specific for a given domain, use the global option \term{domain\_certfile}.
   \titem{ciphers: Ciphers} OpenSSL ciphers list in the same format accepted by
   `\verb|openssl ciphers|' command.
+  \titem{protocol\_options: ProtocolOpts} \ind{options!protocol\_options}
+  List of general options relating to SSL/TLS. These map to
+  \footahref{https://www.openssl.org/docs/ssl/SSL\_CTX\_set\_options.html}{OpenSSL's set\_options()}.
+  For a full list of options available in ejabberd,
+  \footahref{https://github.com/processone/tls/blob/master/c\_src/options.h}{see the source}.
+  The default entry is: \verb|"no_sslv2"|
   \titem{default\_host: undefined|HostName\}}
     If the HTTP request received by ejabberd contains the HTTP header \term{Host}
     with an ambiguous virtual host that doesn't match any one defined in ejabberd (see \ref{hostnames}),
@@ -962,6 +978,13 @@ This is a detailed description of each option allowed by the listening modules:
     \term{http\_poll\_timeout}. The default value is five minutes.
     The option can be defined in \term{ejabberd.yml}, expressing the time
     in seconds: \verb|{http_poll_timeout, 300}.|
+  \titem{max\_ack\_queue: Size}
+    This option specifies the maximum number of unacknowledged stanzas
+    queued for possible retransmission if \term{stream\_management} is
+    enabled. When the limit is exceeded, the client session is
+    terminated. This option can be specified for \term{ejabberd\_c2s}
+    listeners. The allowed values are positive integers and
+    \term{infinity}. Default value: \term{500}.
   \titem{max\_fsm\_queue: Size}
     This option specifies the maximum number of elements in the queue of the FSM
     (Finite State Machine).
@@ -999,6 +1022,27 @@ request_handlers:
   /"a"/"b": mod_foo
   /"http-bind": mod_http_bind
 \end{verbatim}
+  \titem{resend\_on\_timeout: true|false|if\_offline}
+    If \term{stream\_management} is enabled and this option is set to
+    \term{true}, any stanzas that weren't acknowledged by the client
+    will be resent on session timeout. This behavior might often be
+    desired, but could have unexpected results under certain
+    circumstances. For example, a message that was sent to two resources
+    might get resent to one of them if the other one timed out.
+    Therefore, the default value for this option is \term{false}, which
+    tells ejabberd to generate an error message instead. As an
+    alternative, the option may be set to \term{if\_offline}. In this
+    case, unacknowledged stanzas are resent only if no other resource is
+    online when the session times out. Otherwise, error messages are
+    generated. The option can be specified for \term{ejabberd\_c2s}
+    listeners.
+  \titem{resume\_timeout: Seconds}
+    This option configures the number of seconds until a session times
+    out if the connection is lost. During this period of time, a client
+    may resume the session if \term{stream\_management} is enabled. This
+    option can be specified for \term{ejabberd\_c2s} listeners. Setting
+    it to \term{0} effectively disables session resumption. The default
+    value is \term{300}.
   \titem{service\_check\_from: true|false}
     \ind{options!service\_check\_from}
     This option can be used with \term{ejabberd\_service} only.
@@ -1022,6 +1066,10 @@ request_handlers:
     No unencrypted connections will be allowed.
     You should also set the \option{certfile} option.
     You can define a certificate file for a specific domain using the global option \option{domain\_certfile}.
+  \titem{stream\_management: true|false}
+    Setting this option to \term{false} disables ejabberd's support for
+    Stream Management (\xepref{0198}). It can be specified for
+    \term{ejabberd\_c2s} listeners. The default value is \term{true}.
   \titem{timeout: Integer} \ind{options!timeout}
     Timeout of the connections, expressed in milliseconds.
     Default: 5000
@@ -1065,6 +1113,12 @@ There are some additional global options that can be specified in the ejabberd c
   Full path to the file containing the SSL certificate for a specific domain.
   \titem{s2s\_ciphers: Ciphers} \ind{options!s2s\_ciphers} OpenSSL ciphers list
   in the same format accepted by `\verb|openssl ciphers|' command.
+  \titem{s2s\_protocol\_options: ProtocolOpts} \ind{options!s2s\_protocol\_options}
+  List of general options relating to SSL/TLS. These map to
+  \footahref{https://www.openssl.org/docs/ssl/SSL\_CTX\_set\_options.html}{OpenSSL's set\_options()}.
+  For a full list of options available in ejabberd,
+  \footahref{https://github.com/processone/tls/blob/master/c\_src/options.h}{see the source}.
+  The default entry is: \verb|"no_sslv2"|
   \titem{outgoing\_s2s\_families: [Family, ...]} \ind{options!outgoing\_s2s\_families}
   Specify which address families to try, in what order.
   By default it first tries connecting with IPv4, if that fails it tries using IPv6.
@@ -1240,11 +1294,11 @@ access:
     all: normal
   xmlrpc_access: 
     xmlrpc_bot: allow
-  s2s_access:
+  s2s:
     trusted_servers: allow
     all: deny
 s2s_certfile: "/path/to/ssl.pem"
-s2s_policy: s2s_access
+s2s_access: s2s
 s2s_use_starttls: required_trusted
 listen: 
   - 
@@ -1398,6 +1452,11 @@ of the machine, in case it isn't detected automatically.
 The FQDN is used to authenticate some clients that use the DIGEST-MD5 SASL mechanism.
 The option syntax is:
 \esyntax{fqdn: undefined|FqdnString|[FqdnString]}
+
+The option \option{disable\_sasl\_mechanisms} specifies a list of SASL
+mechanisms that should \emph{not} be offered to the client. The mechanisms can
+be listed as lowercase or uppercase strings. The option syntax is:
+\esyntax{disable\_sasl\_mechanisms: [Mechanism, ...]}
 
 \makesubsubsection{internalauth}{Internal}
 \ind{internal authentication}\ind{Mnesia}
@@ -1784,7 +1843,7 @@ The syntax is:
 
 When a JID is checked to have access to \term{Accessname}, the server
 sequentially checks if that JID matches any of the ACLs that are named in the
-second elements of the tuples in the list. If it matches, the first element of
+first elements of the tuples in the list. If it matches, the second element of
 the first matched tuple is returned, otherwise the value `\term{deny}' is
 returned.
 
@@ -1947,22 +2006,57 @@ listen:
   ...
 \end{verbatim}
 
-\makesubsection{stun}{STUN}
+\makesubsection{stun}{STUN and TURN}
 \ind{options!stun}\ind{stun}
 
-\ejabberd{} is able to act as a stand-alone STUN server
-(\footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389}). Currently only Binding usage
-is supported. In that role \ejabberd{} helps clients with Jingle ICE (\xepref{0176}) support to discover their external addresses and ports.
+\ejabberd{} is able to act as a stand-alone STUN/TURN server
+(\footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389}/\footahref{http://tools.ietf.org/html/rfc5766}{RFC 5766}). In that role \ejabberd{} helps clients with ICE (\footahref{http://tools.ietf.org/html/rfc5245}{RFC 5245}) or Jingle ICE (\xepref{0176}) support to discover their external addresses and ports and to relay media traffic when it is impossible to establish direct
+peer-to-peer connection.
 
 You should configure \term{ejabberd\_stun} listening module as described in \ref{listened} section.
-If \option{certfile} option is defined, \ejabberd{} multiplexes TCP and
-TLS over TCP connections on the same port. Obviously, \option{certfile} option
-is defined for \term{tcp} only. Note however that TCP or TLS over TCP
-support is not required for Binding usage and is reserved for
-\footahref{http://tools.ietf.org/html/draft-ietf-behave-turn-16}{TURN}
-functionality. Feel free to configure \term{udp} transport only.
+The specific configurable options are:
+\begin{description}
+  \titem{tls: true|false}
+  If enabled, \option{certfile} option must be set, otherwise \ejabberd{}
+  will not be able to accept TLS connections. Obviously, this option
+  makes sense for \term{tcp} transport only. The default is \term{false}.
+  \titem{certfile: Path}
+  Path to the certificate file. Only makes sense when \option{tls} is set.
+  \titem{use\_turn: true|false}
+  Enables/disables TURN (media relay) functionality. The default is \term{false}.
+  \titem{turn\_ip: String}
+  The IPv4 address advertised by your TURN server. The address should not be NAT'ed
+  or firewalled. There is not default, so you should set this option explicitly.
+  Implies \term{use\_turn}.
+  \titem{turn\_min\_port: Integer}
+  Together with \option{turn\_max\_port} forms port range to allocate from.
+  The default is 49152. Implies \term{use\_turn}.
+  \titem{turn\_max\_port: Integer}
+  Together with \option{turn\_min\_port} forms port range to allocate from.
+  The default is 65535. Implies \term{use\_turn}.
+  \titem{turn\_max\_allocations: Integer|infinity}
+  Maximum number of TURN allocations available from the particular IP address.
+  The default value is 10. Implies \term{use\_turn}.
+  \titem{turn\_max\_permissions: Integer|infinity}
+  Maximum number of TURN permissions available from the particular IP address.
+  The default value is 10. Implies \term{use\_turn}.
+  \titem{auth\_type: user|anonymous}
+  Which authentication type to use for TURN allocation requests. When type \term{user}
+  is set, ejabberd authentication backend is used. For \term{anonymous} type
+  no authentication is performed (not recommended for public services).
+  The default is \term{user}. Implies \term{use\_turn}.
+  \titem{auth\_realm: String}
+  When \option{auth\_type} is set to \term{user} and you have several virtual
+  hosts configured you should set this option explicitly to the virtual host
+  you want to serve on this particular listening port. Implies \term{use\_turn}.
+  \titem{shaper: Atom}
+  For \term{tcp} transports defines shaper to use. The default is \term{none}.
+  \titem{server\_name: String}
+  Defines software version to return with every response. The default is the
+  STUN library version.
+\end{description}
 
-Example configuration:
+Example configuration with disabled TURN functionality (STUN only):
 \begin{verbatim}
 listen:
   ...
@@ -1980,16 +2074,94 @@ listen:
   ...
 \end{verbatim}
 
-You also need to configure DNS SRV records properly so clients can easily discover a
-STUN server serving your XMPP domain. Refer to section
-\footahref{http://tools.ietf.org/html/rfc5389\#section-9}{DNS Discovery of a Server}
-of \footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389} for details.
+Example configuration with TURN functionality. Note that STUN is always
+enabled if TURN is enabled. Here, only UDP section is shown:
+\begin{verbatim}
+listen:
+  ...
+  - 
+    port: 3478
+    transport: udp
+    use_turn: true
+    turn_ip: 10.20.30.1
+    module: ejabberd_stun
+  ...
+\end{verbatim}
 
-Example DNS SRV configuration:
+You also need to configure DNS SRV records properly so clients can easily discover a
+STUN/TURN server serving your XMPP domain. Refer to section
+\footahref{http://tools.ietf.org/html/rfc5389\#section-9}{DNS Discovery of a Server}
+of \footahref{http://tools.ietf.org/html/rfc5389}{RFC 5389} and section
+\footahref{http://tools.ietf.org/html/rfc5766\#section-6}{Creating an Allocation}
+of \footahref{http://tools.ietf.org/html/rfc5766}{RFC 5766} for details.
+
+Example DNS SRV configuration for STUN only:
 \begin{verbatim}
 _stun._udp   IN SRV  0 0 3478 stun.example.com.
 _stun._tcp   IN SRV  0 0 3478 stun.example.com.
 _stuns._tcp  IN SRV  0 0 5349 stun.example.com.
+\end{verbatim}
+
+And you should also add these in the case if TURN is enabled:
+\begin{verbatim}
+_turn._udp   IN SRV  0 0 3478 turn.example.com.
+_turn._tcp   IN SRV  0 0 3478 turn.example.com.
+_turns._tcp  IN SRV  0 0 5349 turn.example.com.
+\end{verbatim}
+
+\makesubsection{sip}{SIP}
+\ind{options!sip}\ind{sip}
+
+\ejabberd{} has built-in SIP support. In order to activate it you need to add
+listeners for it, configure DNS properly and enable \modsip{} for
+the desired virtual host.
+
+To add a listener you should configure \term{ejabberd\_sip} listening module as
+described in \ref{listened} section. If option \option{tls} is specified, option
+\option{certfile} must be specified as well, otherwise incoming TLS connections would fail.
+
+Example configuration with standard ports
+(as per \footahref{http://tools.ietf.org/html/rfc3261}{RFC 3261}):
+\begin{verbatim}
+listen:
+  ...
+  - 
+    port: 5060
+    transport: udp
+    module: ejabberd_sip
+  - 
+    port: 5060
+    module: ejabberd_sip
+  -
+    port: 5061
+    module: ejabberd_sip
+    tls: true
+    certfile: "/etc/ejabberd/server.pem"
+  ...
+\end{verbatim}
+
+Note that there is no StartTLS support in SIP and \footahref{http://en.wikipedia.org/wiki/Server\_Name\_Indication}{SNI} support is somewhat tricky, so for TLS you have to configure
+different virtual hosts on different ports if you have different certificate files for them.
+
+Next you need to configure DNS SIP records for your virtual domains.
+Refer to \footahref{http://tools.ietf.org/html/rfc3263}{RFC 3263} for the detailed explanation.
+Simply put, you should add NAPTR and SRV records for your domains.
+Skip NAPTR configuration if your DNS provider doesn't support this type of records.
+It's not fatal, however, highly recommended.
+
+Example configuration of NAPTR records:
+\begin{verbatim}
+example.com IN NAPTR 10  0 "s" "SIPS+D2T" "" _sips._tcp.example.com.
+example.com IN NAPTR 20  0 "s" "SIP+D2T" "" _sip._tcp.example.com.
+example.com IN NAPTR 30  0 "s" "SIP+D2U" "" _sip._udp.example.com.
+\end{verbatim}
+
+Example configuration of SRV records with standard ports
+(as per \footahref{http://tools.ietf.org/html/rfc3261}{RFC 3261}):
+\begin{verbatim}
+_sip._udp   IN SRV  0 0 5060 sip.example.com.
+_sip._tcp   IN SRV  0 0 5060 sip.example.com.
+_sips._tcp  IN SRV  0 0 5061 sip.example.com.
 \end{verbatim}
 
 \makesubsection{includeconfigfile}{Include Additional Configuration Files}
@@ -2133,7 +2305,7 @@ listen:
 %TODO: this whole section is not yet 100% optimized
 
 \ejabberd{} uses its internal Mnesia database by default. However, it is
-possible to use a relational database or an LDAP server to store persistent,
+possible to use a relational database, key-value storage or an LDAP server to store persistent,
 long-living data. \ejabberd{} is very flexible: you can configure different
 authentication methods for different virtual hosts, you can configure different
 authentication mechanisms for the same virtual host (fallback), you can set
@@ -2146,6 +2318,7 @@ The following databases are supported by \ejabberd{}:
 \item \footahref{http://www.mysql.com/}{MySQL}
 \item \footahref{http://en.wikipedia.org/wiki/Open\_Database\_Connectivity}{Any ODBC compatible database}
 \item \footahref{http://www.postgresql.org/}{PostgreSQL}
+\item \footahref{http://basho.com/riak/}{Riak}
 \end{itemize}
 
 The following LDAP servers are tested with \ejabberd{}:
@@ -2500,6 +2673,79 @@ modules:
   ...
 \end{verbatim}
 
+\makesubsection{riak}{Riak}
+\ind{databases!Riak}
+
+\footahref{http://basho.com/riak/}{Riak} is a distributed NoSQL key-value data store.
+The actual database access is defined in the options with \term{riak\_} prefix.
+
+\makesubsubsection{riakconnection}{Connection}
+\ind{riak!connection}
+
+The following paramaters are available:
+\begin{description}
+  \titem{riak\_server: String} A hostname of the Riak server. The default is
+  \term{``localhost''}.
+  \titem{riak\_port: Port} The port where the Riak server is accepting connections.
+  The defalt is 8087.
+  \titem{riak\_pool\_size: N} By default \ejabberd{} opens 10 connections to
+  the Riak server. You can change this number by using this option.
+  \titem{riak\_start\_interval: N} If the connection to the Riak server fails,
+  \ejabberd{} waits 30 seconds before retrying.
+  You can modify this interval with this option.
+\end{description}
+
+Example configuration:
+\begin{verbatim}
+riak_server: "riak.server.com"
+riak_port: 9097
+\end{verbatim}
+
+\makesubsubsection{riakstorage}{Storage}
+\ind{riak!storage}
+
+Several \ejabberd{} modules can be used to store information in Riak database.
+Refer to the corresponding module documentation to see if it supports such
+ability. To enable storage to Riak database, just make
+sure that your database is running well (see the next section), and add the
+module option \term{db\_type: riak}.
+
+\makesubsubsection{riakconfiguration}{Riak Configuration}
+\ind{riak!configuration}
+
+First, you need to configure Riak to use
+\footahref{http://en.wikipedia.org/wiki/LevelDB}{LevelDB} as a database backend.
+
+If you are using Riak 2.x and higher, configure \term{storage\_backend} option
+of \term{/etc/riak/riak.conf} as follows:
+\begin{verbatim}
+...
+storage_backend = leveldb
+...
+\end{verbatim}
+
+If you are using Riak 1.4.x and older, configure \term{storage\_backend} option
+of \term{/etc/riak/app.config} in the section \term{riak\_kv} as follows:
+\begin{verbatim}
+...
+ {riak_kv, [
+            ...
+            {storage_backend, riak_kv_eleveldb_backend},
+...
+\end{verbatim}
+
+Second, Riak should be pointed to \ejabberd{} Erlang binary files (*.beam).
+As described in \ref{install}, by default those are located
+in \term{/lib/ejabberd/ebin} directory. So you
+should add the following to \term{/etc/riak/vm.args}:
+\begin{verbatim}
+...
+## Path to ejabberd beams in order to make map/reduce
+-pz /lib/ejabberd/ebin
+...
+\end{verbatim}
+Important notice: make sure Riak has at least read access to that directory.
+Otherwise its startup will likely fail.
 
 \makesection{modules}{Modules Configuration}
 \ind{modules}
@@ -2521,8 +2767,7 @@ modules:
   mod_echo: {}
 \end{verbatim}
 \item In the second example the modules \modecho{}, \modtime{}, and
-  \modversion{} are loaded without options. Remark that, besides the last entry,
-  all entries end with a comma:
+  \modversion{} are loaded without options.
 \begin{verbatim}
 modules:
   mod_echo:      {}
@@ -2545,9 +2790,12 @@ The following table lists all modules included in \ejabberd{}.
     \hline \ahrefloc{modannounce}{\modannounce{}} & Manage announcements & recommends \modadhoc{} \\
     \hline \modblocking{} & Simple Communications Blocking (\xepref{0191}) & \modprivacy{} \\
     \hline \modcaps{} &  Entity Capabilities (\xepref{0115}) & \\
+    \hline \modcarboncopy{} & Message Carbons (\xepref{0280}) & \\
+    \hline \ahrefloc{modclientstate}{\modclientstate{}} & Filter stanzas for inactive clients &  \\
     \hline \modconfigure{} & Server configuration using Ad-Hoc & \modadhoc{} \\
     \hline \ahrefloc{moddisco}{\moddisco{}} & Service Discovery (\xepref{0030}) &  \\
     \hline \ahrefloc{modecho}{\modecho{}} & Echoes XMPP stanzas &  \\
+    \hline \ahrefloc{modfail2ban}{\modfailban{}} & Bans IPs that show the malicious signs & \\
     \hline \ahrefloc{modhttpbind}{\modhttpbind{}} & XMPP over Bosh service (HTTP Binding) &  \\
     \hline \ahrefloc{modhttpfileserver}{\modhttpfileserver{}} & Small HTTP file server &  \\
     \hline \ahrefloc{modirc}{\modirc{}} & IRC transport &  \\
@@ -2569,6 +2817,7 @@ The following table lists all modules included in \ejabberd{}.
     \hline \ahrefloc{modsharedroster}{\modsharedroster{}} & Shared roster management & \modroster{} \\
     \hline \ahrefloc{modsharedrosterldap}{\modsharedrosterldap{}} & LDAP Shared roster management & \modroster{} \\
     \hline \ahrefloc{modsic}{\modsic{}} & Server IP Check (\xepref{0279}) &  \\
+    \hline \ahrefloc{modsip}{\modsip{}} & SIP Registrar/Proxy (\footahref{http://tools.ietf.org/html/rfc3261}{RFC 3261}) & \term{ejabberd\_sip} \\
     \hline \ahrefloc{modstats}{\modstats{}} & Statistics Gathering (\xepref{0039}) &  \\
     \hline \ahrefloc{modtime}{\modtime{}} & Entity Time (\xepref{0202}) &  \\
     \hline \ahrefloc{modvcard}{\modvcard{}} & vcard-temp (\xepref{0054}) &  \\
@@ -2586,7 +2835,7 @@ The following table lists all modules included in \ejabberd{}.
 You can see which database backend each module needs by looking at the suffix:
 \begin{itemize}
 \item No suffix, this means that the module uses Erlang's built-in database
-  Mnesia as backend, or a ODBC database in some cases (see~\ref{database}).
+  Mnesia as backend, Riak key-value store or ODBC database (see~\ref{database}).
 \item `\_ldap', this means that the module needs an LDAP server as backend.
 \end{itemize}
 
@@ -2763,6 +3012,38 @@ Note that \modannounce{} can be resource intensive on large
 deployments as it can broadcast lot of messages. This module should be
 disabled for instances of \ejabberd{} with hundreds of thousands users.
 
+\makesubsection{modclientstate}{\modclientstate{}}
+\ind{modules!\modclientstate{}}\ind{Client State Indication}
+\ind{protocols!XEP-0352: Client State Indication}
+
+This module allows for queueing or dropping certain types of stanzas
+when a client indicates that the user is not actively using the client
+at the moment (see \xepref{0352}). This can save bandwidth and
+resources.
+
+Options:
+\begin{description}
+\titem{drop\_chat\_states: true|false} \ind{options!drop\_chat\_states}
+  Drop most "standalone" Chat State Notifications (as defined in
+  \xepref{0085}) while a client indicates inactivity. The default value
+  is \term{false}.
+\titem{queue\_presence: true|false} \ind{options!queue\_presence}
+  While a client is inactive, queue presence stanzas that indicate
+  (un)availability. The latest queued stanza of each contact is
+  delivered as soon as the client becomes active again. The default
+  value is \term{false}.
+\end{description}
+
+Example:
+\begin{verbatim}
+modules:
+  ...
+  mod_client_state:
+    drop_chat_states: true
+    queue_presence: true
+  ...
+\end{verbatim}
+
 \makesubsection{moddisco}{\moddisco{}}
 \ind{modules!\moddisco{}}
 \ind{protocols!XEP-0030: Service Discovery}
@@ -2878,6 +3159,30 @@ modules:
   ...
   mod_echo:
     host: "mirror.example.org"
+  ...
+\end{verbatim}
+
+\makesubsection{modfail2ban}{\modfailban{}}
+\ind{modules!\modfailban{}}\ind{modfail2ban}
+
+The module bans IPs that show the malicious signs. Currently only C2S authentication
+failures are detected.
+
+Available options:
+\begin{description}
+  \titem{c2s\_auth\_ban\_lifetime: Seconds} The lifetime of the IP ban caused by too
+  many C2S authentication failures. The default is 3600, i.e. one hour.
+  \titem{c2s\_max\_auth\_failures: Integer} The number of C2S authentication failures to
+  trigger the IP ban. The default is 20.
+\end{description}
+
+Example:
+\begin{verbatim}
+modules:
+  ...
+  mod_fail2ban:
+    c2s_auth_block_lifetime: 7200
+    c2s_max_auth_failures: 50
   ...
 \end{verbatim}
 
@@ -3179,15 +3484,15 @@ Module options:
 \titem{max\_room\_id: Number} \ind{options!max\_room\_id}
   This option defines the maximum number of characters that Room ID
   can have when creating a new room.
-  The default value is to not limit: infinite.
+  The default value is to not limit: \term{infinity}.
 \titem{max\_room\_name: Number} \ind{options!max\_room\_name}
   This option defines the maximum number of characters that Room Name
   can have when configuring the room.
-  The default value is to not limit: infinite.
+  The default value is to not limit: \term{infinity}.
 \titem{max\_room\_desc: Number} \ind{options!max\_room\_desc}
   This option defines the maximum number of characters that Room Description
   can have when configuring the room.
-  The default value is to not limit: infinite.
+  The default value is to not limit: \term{infinity}.
 \titem{min\_message\_interval: Number} \ind{options!min\_message\_interval}
   This option defines the minimum interval between two messages send
   by an occupant in seconds. This option is global and valid for all
@@ -3519,6 +3824,8 @@ online again. Thus it is very similar to how email works. Note that
   The default value is \term{max\_user\_offline\_messages}.
   Then you can define an access rule with a syntax similar to 
   \term{max\_user\_sessions} (see \ref{configmaxsessions}).
+  \titem{store\_empty\_body: true|false}\ind{options!store\_empty\_body} Whether or not
+  to store messages with empty \term{<body/>} element. The default value is \term{true}.
 \end{description}
 
 This example allows power users to have as much as 5000 offline messages,
@@ -4608,6 +4915,72 @@ Options:
 \begin{description}
 \iqdiscitem{\ns{urn:xmpp:sic:0}}
 \end{description}
+
+\makesubsection{modsip}{\modsip{}}
+\ind{modules!\modsip{}}
+This module adds SIP proxy/registrar support for the corresponding virtual host.
+Note that it is not enough to just load this module only. You should also configure
+listeners and DNS records properly. See section \ref{sip} for the full explanation.
+
+Example configuration:
+\begin{verbatim}
+modules:
+  ...
+  mod_sip: {}
+  ...
+\end{verbatim}
+
+Options:
+\begin{description}
+\titem{record\_route: SIP\_URI}\ind{options!record\_route}When the option
+\term{always\_record\_route} is set or when SIP outbound
+is utilized \footahref{http://tools.ietf.org/html/rfc5626}{RFC 5626},
+\ejabberd{} inserts \term{Record-Route} header field with this \term{SIP\_URI}
+into a SIP message. The default is SIP URI constructed from the virtual host.
+\titem{always\_record\_route: true|false}\ind{options!always\_record\_route}
+Always insert \term{Record-Route} header into SIP messages. This approach allows
+to bypass NATs/firewalls a bit more easily. The default is \term{true}.
+\titem{routes: [SIP\_URI]}\ind{options!routes}You can set a list of SIP URIs of routes
+pointing to this proxy server. The default is a list of a SIP URI constructed
+from the virtual host.
+\titem{flow\_timeout\_udp: Seconds}For SIP outbound UDP connections set a keep-alive
+timer to \term{Seconds}. The default is 29.
+\titem{flow\_timeout\_tcp: Seconds}For SIP outbound TCP connections set a keep-alive
+timer to \term{Seconds}. The default is 120.
+\titem{via: [\{type: Type, host: Host, port: Port\}]}\ind{options!via}With
+this option for every \term{Type} you can specify \term{Host} and \term{Port}
+to set in \term{Via} header of outgoing SIP messages, where \term{Type} can be
+\term{udp}, \term{tcp} or \term{tls}. \term{Host} is a string and \term{Port} is 
+a non negative integer. This is useful if you're running your server in a non-standard
+network topology.
+\end{description}
+Example complex configuration:
+\begin{verbatim}
+modules:
+  ...
+  mod_sip:
+    always_record_route: false
+    record_route: sip:example.com;lr
+    routes:
+      - sip:example.com;lr
+      - sip:sip.example.com;lr
+    flow_timeout_udp: 30
+    flow_timeout_tcp: 130
+    via:
+      - 
+        type: tls
+        host: "sip-tls.example.com"
+        port: 5061
+      - 
+        type: tcp
+        host: "sip-tcp.example.com"
+        port: 5060
+      - 
+        type: udp
+        host: "sip-udp.example.com"
+        port: 5060
+  ...
+\end{verbatim}
 
 \makesubsection{modstats}{\modstats{}}
 \ind{modules!\modstats{}}\ind{protocols!XEP-0039: Statistics Gathering}\ind{statistics}
@@ -5810,10 +6183,11 @@ The syntax is:
 
 \makesection{logfiles}{Log Files}
 
-An \ejabberd{} node writes two log files:
+An \ejabberd{} node writes three log files:
 \begin{description}
 	\titem{ejabberd.log} is the ejabberd service log, with the messages reported by \ejabberd{} code
-	\titem{erlang.log} is the Erlang/OTP system log, with the messages reported by Erlang/OTP using SASL (System Architecture Support Libraries)
+        \titem{error.log} is the file accumulating error messages from \term{ejabberd.log}
+	\titem{crash.log} is the Erlang/OTP log, with the crash messages reported by Erlang/OTP using SASL (System Architecture Support Libraries)
 \end{description}
 
 The option \term{loglevel} modifies the verbosity of the file ejabberd.log. The syntax:
@@ -5835,13 +6209,50 @@ For example, the default configuration is:
 loglevel: 4
 \end{verbatim}
 
-The log files grow continually, so it is recommended to rotate them periodically.
-To rotate the log files, rename the files and then reopen them.
+Option \term{log\_rate\_limit} is useful if you want to protect the logging
+mechanism from being overloaded by excessive amount of log messages.
+The syntax is:
+\begin{description}
+  \titem{log\_rate\_limit: N} Where N is a maximum number of log messages per second.
+  The default value is 100.
+\end{description}
+When the limit is reached the similar warning message is logged:
+\begin{verbatim}
+lager_error_logger_h dropped 800 messages in the last second that exceeded the limit of 100 messages/sec
+\end{verbatim}
+
+By default \ejabberd{} rotates the log files when they get grown above a certain size.
+The exact value is controlled by \term{log\_rotate\_size} option.
+The syntax is:
+\begin{description}
+  \titem{log\_rotate\_size: N} Where N is the maximum size of a log file in bytes.
+  The default value is 10485760 (10Mb).
+\end{description}
+
+\ejabberd{} can also rotates the log files at given date interval.
+The exact value is controlled by \term{log\_rotate\_date} option.
+The syntax is:
+\begin{description}
+  \titem{log\_rotate\_date: D} Where D is a string with syntax is taken from the syntax newsyslog uses in newsyslog.conf.
+  The default value is \term{""} (no rotation triggered by date).
+\end{description}
+
+However, you can rotate the log files manually.
+For doing this, set \term{log\_rotate\_size} option to 0 and \term{log\_rotate\_date}
+to empty list, then, when you need to rotate the files, rename and then reopen them.
 The ejabberdctl command \term{reopen-log} 
 (please refer to section \ref{ectl-commands})
 reopens the log files,
 and also renames the old ones if you didn't rename them.
 
+The option \term{log\_rotate\_count} defines the number of rotated files to keep
+by \term{reopen-log} command.
+Every such file has a numeric suffix. The exact format is:
+\begin{description}
+  \titem{log\_rotate\_count: N} The default value is 1,
+  which means only \term{ejabberd.log.0}, \term{error.log.0}
+  and \term{crash.log.0} will be kept.
+\end{description}
 
 \makesection{debugconsole}{Debug Console}
 

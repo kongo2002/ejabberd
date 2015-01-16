@@ -74,7 +74,8 @@
 	 on_user_offline/3, remove_user/2,
 	 disco_local_identity/5, disco_local_features/5,
 	 disco_local_items/5, disco_sm_identity/5,
-	 disco_sm_features/5, disco_sm_items/5]).
+	 disco_sm_features/5, disco_sm_items/5,
+	 drop_pep_error/4]).
 
 %% exported iq handlers
 -export([iq_sm/3]).
@@ -344,6 +345,8 @@ init([ServerHost, Opts]) ->
 			     ?MODULE, disco_sm_features, 75),
 	  ejabberd_hooks:add(disco_sm_items, ServerHost, ?MODULE,
 			     disco_sm_items, 75),
+	  ejabberd_hooks:add(c2s_filter_packet_in, ServerHost, ?MODULE,
+			     drop_pep_error, 75),
 	  gen_iq_handler:add_iq_handler(ejabberd_sm, ServerHost,
 					?NS_PUBSUB, ?MODULE, iq_sm, IQDisc),
 	  gen_iq_handler:add_iq_handler(ejabberd_sm, ServerHost,
@@ -387,7 +390,7 @@ init_send_loop(ServerHost, State) ->
 init_plugins(Host, ServerHost, Opts) ->
     TreePlugin =
 	jlib:binary_to_atom(<<(?TREE_PREFIX)/binary,
-				(gen_mod:get_opt(nodetree, Opts, fun(A) when is_list(A) -> A end,
+				(gen_mod:get_opt(nodetree, Opts, fun(A) when is_binary(A) -> A end,
 						 ?STDTREE))/binary>>),
     ?DEBUG("** tree plugin is ~p", [TreePlugin]),
     TreePlugin:init(Host, ServerHost, Opts),
@@ -690,9 +693,9 @@ update_node_database(Host, ServerHost) ->
     end,
     mnesia:transaction(fun () ->
 			       case catch mnesia:first(pubsub_node) of
-				 {_, L} when is_binary(L) ->
+				 {_, L} when is_list(L) ->
 				     lists:foreach(fun ({H, N})
-							   when is_binary(N) ->
+							   when is_list(N) ->
 							   [Node] =
 							       mnesia:read({pubsub_node,
 									    {H,
@@ -827,7 +830,7 @@ send_loop(State) ->
 						      end;
 						  (_) -> ok
 					      end,
-					      Subscriptions)
+					      lists:usort(Subscriptions))
 			end,
 			State#state.plugins),
 	  if not State#state.ignore_pep_from_offline ->
@@ -1166,22 +1169,25 @@ disco_items(Host, Node, From) ->
 %% presence hooks handling functions
 %%
 
-caps_update(#jid{luser = U, lserver = S, lresource = R} = From, To, _Features) ->
-    Pid = ejabberd_sm:get_session_pid(U, S, R),
-    presence_probe(From, To, Pid).
+caps_update(#jid{luser = U, lserver = S, lresource = R}, #jid{lserver = Host} = JID, _Features)
+	when Host =/= S ->
+    presence(Host, {presence, U, S, [R], JID});
+caps_update(_From, _To, _Feature) ->
+    ok.
 
-presence_probe(#jid{luser = User, lserver = Server, lresource = Resource} = JID,
-  JID, Pid) ->
-    presence(Server, {presence, JID, Pid}),
-    presence(Server, {presence, User, Server, [Resource], JID});
-presence_probe(#jid{luser = User, lserver = Server},
-  #jid{luser = User, lserver = Server}, _Pid) ->
-    %% ignore presence_probe from other ressources for the current user
-    %% this way, we do not send duplicated last items if user already connected with other clients
+presence_probe(#jid{luser = U, lserver = S, lresource = R} = JID, JID, Pid) ->
+    presence(S, {presence, JID, Pid}),
+    presence(S, {presence, U, S, [R], JID});
+presence_probe(#jid{luser = U, lserver = S}, #jid{luser = U, lserver = S}, _Pid) ->
+    %% ignore presence_probe from my other ressources
+    %% to not get duplicated last items
     ok;
-presence_probe(#jid{luser = User, lserver = Server, lresource = Resource},
-  #jid{lserver = Host} = JID, _Pid) ->
-    presence(Host, {presence, User, Server, [Resource], JID}).
+presence_probe(#jid{luser = U, lserver = S, lresource = R}, #jid{lserver = S} = JID, _Pid) ->
+    presence(S, {presence, U, S, [R], JID});
+presence_probe(_Host, _JID, _Pid) ->
+    %% ignore presence_probe from remote contacts,
+    %% those are handled via caps_update
+    ok.
 
 presence(ServerHost, Presence) ->
     SendLoop = case
@@ -1278,6 +1284,33 @@ unsubscribe_user(Entity, Owner) ->
 				end,
 				plugins(Host))
 	  end).
+
+%% -------
+%% packet receive hook handling function
+%%
+
+drop_pep_error(#xmlel{name = <<"message">>, attrs = Attrs} = Packet, _JID, From,
+	       #jid{lresource = <<"">>} = To) ->
+    case xml:get_attr_s(<<"type">>, Attrs) of
+      <<"error">> ->
+	  case xml:get_subtag(Packet, <<"event">>) of
+	    #xmlel{attrs = EventAttrs} ->
+		case xml:get_attr_s(<<"xmlns">>, EventAttrs) of
+		  ?NS_PUBSUB_EVENT ->
+		      ?DEBUG("Dropping PEP error message from ~s to ~s",
+			     [jlib:jid_to_string(From),
+			      jlib:jid_to_string(To)]),
+		      drop;
+		  _ ->
+		      Packet
+		end;
+	    false ->
+		Packet
+	  end;
+      _ ->
+	  Packet
+    end;
+drop_pep_error(Acc, _JID, _From, _To) -> Acc.
 
 %% -------
 %% user remove hook handling function
@@ -1419,6 +1452,8 @@ terminate(_Reason,
 				?MODULE, disco_sm_features, 75),
 	  ejabberd_hooks:delete(disco_sm_items, ServerHost,
 				?MODULE, disco_sm_items, 75),
+	  ejabberd_hooks:delete(c2s_filter_packet_in, ServerHost,
+				?MODULE, drop_pep_error, 75),
 	  gen_iq_handler:remove_iq_handler(ejabberd_sm,
 					   ServerHost, ?NS_PUBSUB),
 	  gen_iq_handler:remove_iq_handler(ejabberd_sm,
@@ -1621,7 +1656,7 @@ command_disco_info(_Host, ?NS_PUBSUB_GET_PENDING,
 node_disco_info(Host, Node, From) ->
     node_disco_info(Host, Node, From, true, true).
 
-node_disco_info(Host, Node, From, Identity, Features) ->
+node_disco_info(Host, Node, From, _Identity, _Features) ->
 %    Action =
 %	fun(#pubsub_node{type = Type, id = NodeId}) ->
 %		I = case Identity of
@@ -2952,10 +2987,7 @@ publish_item(Host, ServerHost, Node, Publisher, ItemId, Payload, Access) ->
 		     PublishModel = get_option(Options, publish_model),
 		     DeliverPayloads = get_option(Options, deliver_payloads),
 		     PersistItems = get_option(Options, persist_items),
-		     MaxItems = case PersistItems of
-				  false -> 0;
-				  true -> max_items(Host, Options)
-				end,
+		     MaxItems = max_items(Host, Options),
 		     PayloadCount = payload_xmlelements(Payload),
 		     PayloadSize = byte_size(term_to_binary(Payload)) - 2,
 		     PayloadMaxSize = get_option(Options, max_payload_size),
@@ -3316,7 +3348,7 @@ get_allowed_items_call(Host, NodeIdx, From, Type, Options, Owners) ->
 %%	 Number = last | integer()
 %% @doc <p>Resend the items of a node to the user.</p>
 %% @todo use cache-last-item feature
-send_items(Host, Node, NodeId, Type, {U, S, R} = LJID, last) ->
+send_items(Host, Node, NodeId, Type, LJID, last) ->
     case get_cached_item(Host, NodeId) of
       undefined ->
 	  send_items(Host, Node, NodeId, Type, LJID, 1);
@@ -3329,24 +3361,9 @@ send_items(Host, Node, NodeId, Type, {U, S, R} = LJID, last) ->
 						   children =
 						       itemsEls([LastItem])}],
 					   ModifNow, ModifUSR),
-	  case is_tuple(Host) of
-	    false ->
-		ejabberd_router:route(service_jid(Host),
-				      jlib:make_jid(LJID), Stanza);
-	    true ->
-		case ejabberd_sm:get_session_pid(U, S, R) of
-		  C2SPid when is_pid(C2SPid) ->
-		      ejabberd_c2s:broadcast(C2SPid,
-					     {pep_message,
-					      <<((Node))/binary, "+notify">>},
-					     _Sender = service_jid(Host),
-					     Stanza);
-		  _ -> ok
-		end
-	  end
+	  dispatch_items(Host, LJID, Node, Stanza)
     end;
-send_items(Host, Node, NodeId, Type, {U, S, R} = LJID,
-	   Number) ->
+send_items(Host, Node, NodeId, Type, LJID, Number) ->
     ToSend = case node_action(Host, Type, get_items,
 			      [NodeId, LJID])
 		 of
@@ -3359,6 +3376,8 @@ send_items(Host, Node, NodeId, Type, {U, S, R} = LJID,
 	       _ -> []
 	     end,
     Stanza = case ToSend of
+	       [] ->
+		   undefined;
 	       [LastItem] ->
 		   {ModifNow, ModifUSR} =
 		       LastItem#pubsub_item.modification,
@@ -3372,20 +3391,38 @@ send_items(Host, Node, NodeId, Type, {U, S, R} = LJID,
 					attrs = nodeAttr(Node),
 					children = itemsEls(ToSend)}])
 	     end,
-    case is_tuple(Host) of
-      false ->
-	  ejabberd_router:route(service_jid(Host),
-				jlib:make_jid(LJID), Stanza);
-      true ->
-	  case ejabberd_sm:get_session_pid(U, S, R) of
-	    C2SPid when is_pid(C2SPid) ->
-		ejabberd_c2s:broadcast(C2SPid,
-				       {pep_message,
-					<<((Node))/binary, "+notify">>},
-				       _Sender = service_jid(Host), Stanza);
-	    _ -> ok
-	  end
-    end.
+    dispatch_items(Host, LJID, Node, Stanza).
+
+-spec(dispatch_items/4 ::
+(
+  From   :: mod_pubsub:host(),
+  To     :: jid(),
+  Node   :: mod_pubsub:nodeId(),
+  Stanza :: xmlel() | undefined)
+    -> any()
+).
+
+dispatch_items(_From, _To, _Node, _Stanza = undefined) -> ok;
+dispatch_items({FromU, FromS, FromR} = From, {ToU, ToS, ToR} = To, Node,
+	       Stanza) ->
+    C2SPid = case ejabberd_sm:get_session_pid(ToU, ToS, ToR) of
+	       ToPid when is_pid(ToPid) -> ToPid;
+	       _ ->
+		   R = user_resource(FromU, FromS, FromR),
+		   case ejabberd_sm:get_session_pid(FromU, FromS, R) of
+		     FromPid when is_pid(FromPid) -> FromPid;
+		     _ -> undefined
+		   end
+	     end,
+    if C2SPid == undefined -> ok;
+       true ->
+	   ejabberd_c2s:send_filtered(C2SPid,
+				      {pep_message, <<Node/binary, "+notify">>},
+				      service_jid(From), jlib:make_jid(To),
+				      Stanza)
+    end;
+dispatch_items(From, To, _Node, Stanza) ->
+    ejabberd_router:route(service_jid(From), jlib:make_jid(To), Stanza).
 
 %% @spec (Host, JID, Plugins) -> {error, Reason} | {result, Response}
 %%	 Host = host()
@@ -4156,7 +4193,7 @@ presence_can_deliver({User, Server, Resource}, true) ->
 		       ({session, _, _ , _, undefined, _}, _Acc) -> false;
 		       ({session, _, {_, _, R}, _, _Priority, _}, _Acc) ->
 			   case Resource of
-			       [] -> true;
+			       <<>> -> true;
 			       R -> true;
 			       _ -> false
 			   end
@@ -4238,21 +4275,15 @@ payload_xmlelements([_ | Tail], Count) ->
 %% @spec (Els) -> stanza()
 %%	Els = [xmlelement()]
 %% @doc <p>Build pubsub event stanza</p>
-event_stanza(Els) -> event_stanza_withmoreels(Els, []).
-
-event_stanza_with_delay(Els, ModifNow, ModifUSR) ->
-    DateTime = calendar:now_to_datetime(ModifNow),
-    MoreEls = [jlib:timestamp_to_xml(DateTime, utc,
-				     ModifUSR, <<"">>)],
-    event_stanza_withmoreels(Els, MoreEls).
-
-event_stanza_withmoreels(Els, MoreEls) ->
+event_stanza(Els) ->
     #xmlel{name = <<"message">>, attrs = [],
 	   children =
 	       [#xmlel{name = <<"event">>,
 		       attrs = [{<<"xmlns">>, ?NS_PUBSUB_EVENT}],
-		       children = Els}
-		| MoreEls]}.
+		       children = Els}]}.
+
+event_stanza_with_delay(Els, ModifNow, ModifUSR) ->
+    jlib:add_delay_info(event_stanza(Els), ModifUSR, ModifNow).
 
 %%%%%% broadcast functions
 
@@ -4442,15 +4473,7 @@ broadcast_stanza(Host, _Node, _NodeId, _Type, NodeOptions, SubsByDepth, NotifyTy
 broadcast_stanza({LUser, LServer, LResource}, Publisher, Node, NodeId, Type, NodeOptions, SubsByDepth, NotifyType, BaseStanza, SHIM) ->
     broadcast_stanza({LUser, LServer, LResource}, Node, NodeId, Type, NodeOptions, SubsByDepth, NotifyType, BaseStanza, SHIM),
     %% Handles implicit presence subscriptions
-    SenderResource = case LResource of
-	[] -> 
-	    case user_resources(LUser, LServer) of
-		[Resource|_] -> Resource;
-		_ -> <<>>
-	    end;
-	_ ->
-	    LResource
-    end,
+    SenderResource = user_resource(LUser, LServer, LResource),
     case ejabberd_sm:get_session_pid(LUser, LServer, SenderResource) of
 	C2SPid when is_pid(C2SPid) ->
 	    Stanza = case get_option(NodeOptions, notification_type, headline) of
@@ -4461,8 +4484,8 @@ broadcast_stanza({LUser, LServer, LResource}, Publisher, Node, NodeId, Type, Nod
 	    %% Also, add "replyto" if entity has presence subscription to the account owner
 	    %% See XEP-0163 1.1 section 4.3.1
 	    ejabberd_c2s:broadcast(C2SPid,
-	        {pep_message, binary_to_list(Node)++"+notify"},
-	        _Sender = jlib:make_jid(LUser, LServer, ""),
+	        {pep_message, <<((Node))/binary, "+notify">>},
+	        _Sender = jlib:make_jid(LUser, LServer, <<"">>),
 	        _StanzaToSend = add_extended_headers(Stanza,
 	            _ReplyTo = extended_headers([jlib:jid_to_string(Publisher)])));
 	_ ->
@@ -4526,6 +4549,13 @@ subscribed_nodes_by_jid(NotifyType, SubsByDepth) ->
 
 user_resources(User, Server) ->
     ejabberd_sm:get_user_resources(User, Server).
+
+user_resource(User, Server, <<>>) ->
+    case user_resources(User, Server) of
+	[R | _] -> R;
+	_ -> <<>>
+    end;
+user_resource(_, _, Resource) -> Resource.
 
 %%%%%%% Configuration handling
 

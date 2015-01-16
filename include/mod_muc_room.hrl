@@ -12,10 +12,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -59,6 +58,7 @@
     voice_request_min_interval           = 1800 :: non_neg_integer(),
     max_users                            = ?MAX_USERS_DEFAULT :: non_neg_integer() | none,
     logging                              = false :: boolean(),
+    vcard                                = <<"">> :: boolean(),
     captcha_whitelist                    = (?SETS):empty() :: gb_set()
 }).
 

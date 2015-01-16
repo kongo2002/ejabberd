@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -152,7 +151,7 @@ run(Hook, Host, Args) ->
 %% The arguments passed to the function are: [Val | Args].
 %% The result of a call is used as Val for the next call.
 %% If a call returns 'stop', no more calls are performed and 'stopped' is returned.
-%% If a call returns {stopped, NewVal}, no more calls are performed and NewVal is returned.
+%% If a call returns {stop, NewVal}, no more calls are performed and NewVal is returned.
 run_fold(Hook, Val, Args) ->
     run_fold(Hook, global, Val, Args).
 

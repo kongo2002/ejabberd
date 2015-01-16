@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -69,8 +68,15 @@ start() ->
     %% This start time is used by mod_last:
     {MegaSecs, Secs, _} = now(),
     UnixTime = MegaSecs*1000000 + Secs,
+    SharedKey = case erlang:get_cookie() of
+                    nocookie ->
+                        p1_sha:sha(randoms:get_string());
+                    Cookie ->
+                        p1_sha:sha(jlib:atom_to_binary(Cookie))
+                end,
     State1 = set_option({node_start, global}, UnixTime, State),
-    set_opts(State1).
+    State2 = set_option({shared_key, global}, SharedKey, State1),
+    set_opts(State2).
 
 %% @doc Get the filename of the ejabberd configuration file.
 %% The filename can be specified with: erl -config "/path/to/ejabberd.yml".
@@ -180,7 +186,9 @@ consult(File) ->
                 {ok, [Document|_]} ->
                     {ok, Document};
                 {error, Err} ->
-                    {error, p1_yaml:format_error(Err)}
+                    Msg1 = "Cannot load " ++ File ++ ": ",
+                    Msg2 = p1_yaml:format_error(Err),
+                    {error, Msg1 ++ Msg2}
             end;
         _ ->
             case file:consult(File) of
@@ -202,9 +210,8 @@ get_absolute_path(File) ->
 	absolute ->
 	    File;
 	relative ->
-	    Config_path = get_ejabberd_config_path(),
-	    Config_dir = filename:dirname(Config_path),
-	    filename:absname_join(Config_dir, File)
+	    {ok, Dir} = file:get_cwd(),
+	    filename:absname_join(Dir, File)
     end.
 
 
@@ -981,7 +988,7 @@ report_and_stop(Tab, Err) ->
     halt(string:substr(ErrTxt, 1, 199)).
 
 emit_deprecation_warning(Module, NewModule, DBType) ->
-    ?WARNING_MSG("Module ~s is deprecated, use {~s, [{db_type, ~s}, ...]}"
+    ?WARNING_MSG("Module ~s is deprecated, use ~s with 'db_type: ~s'"
                  " instead", [Module, NewModule, DBType]).
 
 emit_deprecation_warning(Module, NewModule) ->

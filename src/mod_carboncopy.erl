@@ -19,10 +19,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 -module (mod_carboncopy).
@@ -42,10 +41,6 @@
          remove_connection/4,
          is_carbon_copy/1]).
 
--define(NS_CC_2, <<"urn:xmpp:carbons:2">>).
--define(NS_CC_1, <<"urn:xmpp:carbons:1">>).
--define(NS_FORWARD, <<"urn:xmpp:forward:0">>).
-
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("jlib.hrl").
@@ -58,20 +53,24 @@
 		    version :: binary() | matchspec_atom()}).
 
 is_carbon_copy(Packet) ->
-	case xml:get_subtag(Packet, <<"sent">>) of
-		#xmlel{name= <<"sent">>, attrs = AAttrs}  ->
-	    	case xml:get_attr_s(<<"xmlns">>, AAttrs) of
-				?NS_CC_2 -> true;
-				?NS_CC_1 -> true;
-				_ -> false
-			end;
+    is_carbon_copy(Packet, <<"sent">>) orelse
+	is_carbon_copy(Packet, <<"received">>).
+
+is_carbon_copy(Packet, Direction) ->
+    case xml:get_subtag(Packet, Direction) of
+	#xmlel{name = Direction, attrs = Attrs} ->
+	    case xml:get_attr_s(<<"xmlns">>, Attrs) of
+		?NS_CARBONS_2 -> true;
+		?NS_CARBONS_1 -> true;
 		_ -> false
-	end.
+	    end;
+	_ -> false
+    end.
 
 start(Host, Opts) ->
     IQDisc = gen_mod:get_opt(iqdisc, Opts,fun gen_iq_handler:check_type/1, one_queue),
-    mod_disco:register_feature(Host, ?NS_CC_1),
-    mod_disco:register_feature(Host, ?NS_CC_2),
+    mod_disco:register_feature(Host, ?NS_CARBONS_1),
+    mod_disco:register_feature(Host, ?NS_CARBONS_2),
     Fields = record_info(fields, ?TABLE),
     try mnesia:table_info(?TABLE, attributes) of
 	Fields -> ok;
@@ -87,26 +86,26 @@ start(Host, Opts) ->
     %% why priority 89: to define clearly that we must run BEFORE mod_logdb hook (90)
     ejabberd_hooks:add(user_send_packet,Host, ?MODULE, user_send_packet, 89),
     ejabberd_hooks:add(user_receive_packet,Host, ?MODULE, user_receive_packet, 89),
-    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_CC_2, ?MODULE, iq_handler2, IQDisc),
-    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_CC_1, ?MODULE, iq_handler1, IQDisc).
+    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_CARBONS_2, ?MODULE, iq_handler2, IQDisc),
+    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_CARBONS_1, ?MODULE, iq_handler1, IQDisc).
 
 stop(Host) ->
-    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_CC_1),
-    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_CC_2),
-    mod_disco:unregister_feature(Host, ?NS_CC_2),
-    mod_disco:unregister_feature(Host, ?NS_CC_1),
+    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_CARBONS_1),
+    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_CARBONS_2),
+    mod_disco:unregister_feature(Host, ?NS_CARBONS_2),
+    mod_disco:unregister_feature(Host, ?NS_CARBONS_1),
     %% why priority 89: to define clearly that we must run BEFORE mod_logdb hook (90)
     ejabberd_hooks:delete(user_send_packet,Host, ?MODULE, user_send_packet, 89),
     ejabberd_hooks:delete(user_receive_packet,Host, ?MODULE, user_receive_packet, 89),
     ejabberd_hooks:delete(unset_presence_hook,Host, ?MODULE, remove_connection, 10).
 
 iq_handler2(From, To, IQ) ->
-	iq_handler(From, To, IQ, ?NS_CC_2).
+	iq_handler(From, To, IQ, ?NS_CARBONS_2).
 iq_handler1(From, To, IQ) ->
-	iq_handler(From, To, IQ, ?NS_CC_1).
+	iq_handler(From, To, IQ, ?NS_CARBONS_1).
 
 iq_handler(From, _To,  #iq{type=set, sub_el = #xmlel{name = Operation, children = []}} = IQ, CC)->
-    ?INFO_MSG("carbons IQ received: ~p", [IQ]),
+    ?DEBUG("carbons IQ received: ~p", [IQ]),
     {U, S, R} = jlib:jid_tolower(From),
     Result = case Operation of
         <<"enable">>->
@@ -118,64 +117,45 @@ iq_handler(From, _To,  #iq{type=set, sub_el = #xmlel{name = Operation, children 
     end,
     case Result of 
         ok ->
-	    ?INFO_MSG("carbons IQ result: ok", []),
+	    ?DEBUG("carbons IQ result: ok", []),
             IQ#iq{type=result, sub_el=[]};
 	{error,_Error} ->
-	    ?INFO_MSG("Error enabling / disabling carbons: ~p", [Result]),
+	    ?WARNING_MSG("Error enabling / disabling carbons: ~p", [Result]),
             IQ#iq{type=error,sub_el = [?ERR_BAD_REQUEST]}
     end;
 
 iq_handler(_From, _To, IQ, _CC)->
     IQ#iq{type=error, sub_el = [?ERR_NOT_ALLOWED]}.
 
-user_send_packet(From, _To, Packet) ->
-    check_and_forward(From, Packet, sent).
+user_send_packet(From, To, Packet) ->
+    check_and_forward(From, To, Packet, sent).
 
-%% Only make carbon copies if the original destination was not a bare jid. 
-%% If the original destination was a bare jid, the message is going to be delivered to all
-%% connected resources anyway. Avoid duplicate delivery. "XEP-0280 : 3.5 Receiving Messages"
-user_receive_packet(JID, _From, #jid{resource=Resource} = _To, Packet) when Resource /= <<>> ->
-    check_and_forward(JID, Packet, received);
-user_receive_packet(_JID, _From, _To, _Packet) ->
-	ok.
+user_receive_packet(JID, _From, To, Packet) ->
+    check_and_forward(JID, To, Packet, received).
     
 % verifier si le trafic est local
 % Modified from original version: 
 %    - registered to the user_send_packet hook, to be called only once even for multicast
 %    - do not support "private" message mode, and do not modify the original packet in any way
 %    - we also replicate "read" notifications
-check_and_forward(JID, #xmlel{name = <<"message">>, attrs = Attrs} = Packet, Direction)->
-    case xml:get_attr_s(<<"type">>, Attrs) of 
-      <<"chat">> ->
-	case xml:get_subtag(Packet, <<"private">>) of
-	    false ->
-		case xml:get_subtag(Packet,<<"received">>) of
-		    false ->
-		    	%% We must check if a packet contains "<sent><forwarded></sent></forwarded>" tags in order to avoid
-                    	%% receiving message back to original sender.
-                    	SubTag = xml:get_subtag(Packet,<<"sent">>),
-                    	if SubTag == false ->
-                            send_copies(JID, Packet, Direction);
-                       	   true ->
-                            case xml:get_subtag(SubTag,<<"forwarded">>) of
-                                false->
-                                    send_copies(JID, Packet, Direction);
-                                _ ->
-                                    stop
-                            end
-                    	end; 
-		    _ ->
-			%% stop the hook chain, we don't want mod_logdb to register this message (duplicate)
-			stop
-		end;
-	    _ ->
-		ok
-	end;
-    _ ->
-	ok
+check_and_forward(JID, To, Packet, Direction)->
+    case is_chat_or_normal_message(Packet) andalso
+	     xml:get_subtag(Packet, <<"private">>) == false andalso
+		 xml:get_subtag(Packet, <<"no-copy">>) == false of
+	true ->
+	    case is_carbon_copy(Packet) of
+		false ->
+		    send_copies(JID, To, Packet, Direction);
+		true ->
+		    %% stop the hook chain, we don't want mod_logdb to register
+		    %% this message (duplicate)
+		    stop
+	    end;
+        _ ->
+	    ok
     end;
  
-check_and_forward(_JID, _Packet, _)-> ok.
+check_and_forward(_JID, _To, _Packet, _)-> ok.
 
 remove_connection(User, Server, Resource, _Status)->
     disable(Server, User, Resource),
@@ -184,14 +164,43 @@ remove_connection(User, Server, Resource, _Status)->
 
 %%% Internal
 %% Direction = received | sent <received xmlns='urn:xmpp:carbons:1'/>
-send_copies(JID, Packet, Direction)->
+send_copies(JID, To, Packet, Direction)->
     {U, S, R} = jlib:jid_tolower(JID),
+    PrioRes = ejabberd_sm:get_user_present_resources(U, S),
+    {MaxPrio, MaxRes} = case catch lists:max(PrioRes) of
+	{Prio, Res} -> {Prio, Res};
+	_ -> {0, undefined}
+    end,
 
+    IsBareTo = case {Direction, To} of
+	{received, #jid{lresource = <<>>}} -> true;
+	{received, #jid{lresource = LRes}} ->
+	    %% unavailable resources are handled like bare JIDs
+	    case lists:keyfind(LRes, 2, PrioRes) of
+		false -> true;
+		_ -> false
+	    end;
+	_ -> false
+    end,
     %% list of JIDs that should receive a carbon copy of this message (excluding the
-    %% receiver of the original message
-    TargetJIDs = [ {jlib:make_jid({U, S, CCRes}), CC_Version} || {CCRes, CC_Version} <- list(U, S), CCRes /= R ],
-    %TargetJIDs = lists:delete(JID, [ jlib:make_jid({U, S, CCRes}) || CCRes <- list(U, S) ]),
-
+    %% receiver(s) of the original message
+    TargetJIDs = case {IsBareTo, R} of
+	{true, MaxRes} ->
+	    OrigTo = fun(Res) -> lists:member({MaxPrio, Res}, PrioRes) end,
+	    [ {jlib:make_jid({U, S, CCRes}), CC_Version}
+	     || {CCRes, CC_Version} <- list(U, S), not OrigTo(CCRes) ];
+	{true, _} ->
+	    %% The message was sent to our bare JID, and we currently have
+	    %% multiple resources with the same highest priority, so the session
+	    %% manager routes the message to each of them. We create carbon
+	    %% copies only from one of those resources (the one where R equals
+	    %% MaxRes) in order to avoid duplicates.
+	    [];
+	{false, _} ->
+	    [ {jlib:make_jid({U, S, CCRes}), CC_Version}
+	     || {CCRes, CC_Version} <- list(U, S), CCRes /= R ]
+	    %TargetJIDs = lists:delete(JID, [ jlib:make_jid({U, S, CCRes}) || CCRes <- list(U, S) ]),
+    end,
 
     lists:map(fun({Dest,Version}) ->
 		    {_, _, Resource} = jlib:jid_tolower(Dest),
@@ -203,15 +212,15 @@ send_copies(JID, Packet, Direction)->
 	      end, TargetJIDs),
     ok.
 
-build_forward_packet(JID, Packet, Sender, Dest, Direction, ?NS_CC_2) ->
+build_forward_packet(JID, Packet, Sender, Dest, Direction, ?NS_CARBONS_2) ->
     #xmlel{name = <<"message">>, 
 	   attrs = [{<<"xmlns">>, <<"jabber:client">>},
-		    {<<"type">>, <<"chat">>},
+		    {<<"type">>, message_type(Packet)},
 		    {<<"from">>, jlib:jid_to_string(Sender)},
 		    {<<"to">>, jlib:jid_to_string(Dest)}],
 	   children = [	
 		#xmlel{name = list_to_binary(atom_to_list(Direction)), 
-		       attrs = [{<<"xmlns">>, ?NS_CC_2}],
+		       attrs = [{<<"xmlns">>, ?NS_CARBONS_2}],
 		       children = [
 			#xmlel{name = <<"forwarded">>, 
 			       attrs = [{<<"xmlns">>, ?NS_FORWARD}],
@@ -219,15 +228,15 @@ build_forward_packet(JID, Packet, Sender, Dest, Direction, ?NS_CC_2) ->
 				complete_packet(JID, Packet, Direction)]}
 		]}
 	   ]};
-build_forward_packet(JID, Packet, Sender, Dest, Direction, ?NS_CC_1) ->
+build_forward_packet(JID, Packet, Sender, Dest, Direction, ?NS_CARBONS_1) ->
     #xmlel{name = <<"message">>, 
 	   attrs = [{<<"xmlns">>, <<"jabber:client">>},
-		    {<<"type">>, <<"chat">>},
+		    {<<"type">>, message_type(Packet)},
 		    {<<"from">>, jlib:jid_to_string(Sender)},
 		    {<<"to">>, jlib:jid_to_string(Dest)}],
 	   children = [	
 		#xmlel{name = list_to_binary(atom_to_list(Direction)), 
-			attrs = [{<<"xmlns">>, ?NS_CC_1}]},
+			attrs = [{<<"xmlns">>, ?NS_CARBONS_1}]},
 		#xmlel{name = <<"forwarded">>, 
 		       attrs = [{<<"xmlns">>, ?NS_FORWARD}],
 		       children = [complete_packet(JID, Packet, Direction)]}
@@ -262,6 +271,20 @@ complete_packet(From, #xmlel{name = <<"message">>, attrs = OrigAttrs} = Packet, 
 complete_packet(_From, #xmlel{name = <<"message">>, attrs=OrigAttrs} = Packet, received) ->
     Attrs = lists:keystore(<<"xmlns">>, 1, OrigAttrs, {<<"xmlns">>, <<"jabber:client">>}),
     Packet#xmlel{attrs = Attrs}.
+
+message_type(#xmlel{attrs = Attrs}) ->
+    case xml:get_attr(<<"type">>, Attrs) of
+	{value, Type} -> Type;
+	false -> <<"normal">>
+    end.
+
+is_chat_or_normal_message(#xmlel{name = <<"message">>} = Packet) ->
+    case message_type(Packet) of
+	<<"chat">> -> true;
+	<<"normal">> -> true;
+	_ -> false
+    end;
+is_chat_or_normal_message(_Packet) -> false.
 
 %% list {resource, cc_version} with carbons enabled for given user and host
 list(User, Server)->

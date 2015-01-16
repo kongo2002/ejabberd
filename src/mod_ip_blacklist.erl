@@ -19,10 +19,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -38,7 +37,7 @@
 -export([update_bl_c2s/0]).
 
 %% Hooks:
--export([is_ip_in_c2s_blacklist/2]).
+-export([is_ip_in_c2s_blacklist/3]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -108,14 +107,23 @@ update_bl_c2s() ->
 %% Return: false: IP not blacklisted
 %%         true: IP is blacklisted
 %% IPV4 IP tuple:
-is_ip_in_c2s_blacklist(_Val, IP) when is_tuple(IP) ->
+is_ip_in_c2s_blacklist(_Val, IP, Lang) when is_tuple(IP) ->
     BinaryIP = jlib:ip_to_list(IP),
     case ets:lookup(bl_c2s, BinaryIP) of
       [] -> %% Not in blacklist
 	  false;
-      [_] -> {stop, true}
+      [_] ->
+	  LogReason = io_lib:fwrite(
+			"This IP address is blacklisted in ~s",
+			[?BLC2S]),
+	  ReasonT = io_lib:fwrite(
+		      translate:translate(
+			Lang,
+			<<"This IP address is blacklisted in ~s">>),
+		      [?BLC2S]),
+	  {stop, {true, LogReason, ReasonT}}
     end;
-is_ip_in_c2s_blacklist(_Val, _IP) -> false.
+is_ip_in_c2s_blacklist(_Val, _IP, _Lang) -> false.
 
 %% TODO:
 %% - For now, we do not kick user already logged on a given IP after

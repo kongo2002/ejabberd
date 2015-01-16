@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -57,7 +56,8 @@
 
 -type conn_param() :: {binary(), binary(), inet:port_number(), binary()} |
                       {binary(), binary(), inet:port_number()} |
-                      {binary(), binary()}.
+                      {binary(), binary()} |
+                      {binary()}.
 
 -record(irc_connection,
         {jid_server_host = {#jid{}, <<"">>, <<"">>} :: {jid(), binary(), binary()},
@@ -591,6 +591,17 @@ get_data(_LServer, Host, From, mnesia) ->
       [] -> empty;
       [#irc_custom{data = Data}] -> Data
     end;
+get_data(LServer, Host, From, riak) ->
+    #jid{luser = LUser, lserver = LServer} = From,
+    US = {LUser, LServer},
+    case ejabberd_riak:get(irc_custom, irc_custom_schema(), {US, Host}) of
+        {ok, #irc_custom{data = Data}} ->
+            Data;
+        {error, notfound} ->
+            empty;
+        _Err ->
+            error
+    end;
 get_data(LServer, Host, From, odbc) ->
     SJID =
 	ejabberd_odbc:escape(jlib:jid_to_string(jlib:jid_tolower(jlib:jid_remove_resource(From)))),
@@ -601,7 +612,7 @@ get_data(LServer, Host, From, odbc) ->
 					<<"';">>])
 	of
       {selected, [<<"data">>], [[SData]]} ->
-	  data_to_binary(ejabberd_odbc:decode_term(SData));
+	  data_to_binary(From, ejabberd_odbc:decode_term(SData));
       {'EXIT', _} -> error;
       {selected, _, _} -> empty
     end.
@@ -712,7 +723,7 @@ get_form(_ServerHost, _Host, _, _, _Lang) ->
 
 set_data(ServerHost, Host, From, Data) ->
     LServer = jlib:nameprep(ServerHost),
-    set_data(LServer, Host, From, data_to_binary(Data),
+    set_data(LServer, Host, From, data_to_binary(From, Data),
 	     gen_mod:db_type(LServer, ?MODULE)).
 
 set_data(_LServer, Host, From, Data, mnesia) ->
@@ -723,6 +734,12 @@ set_data(_LServer, Host, From, Data, mnesia) ->
 					 data = Data})
 	end,
     mnesia:transaction(F);
+set_data(LServer, Host, From, Data, riak) ->
+    {LUser, LServer, _} = jlib:jid_tolower(From),
+    US = {LUser, LServer},
+    {atomic, ejabberd_riak:put(#irc_custom{us_host = {US, Host},
+                                           data = Data},
+			       irc_custom_schema())};
 set_data(LServer, Host, From, Data, odbc) ->
     SJID =
 	ejabberd_odbc:escape(jlib:jid_to_string(jlib:jid_tolower(jlib:jid_remove_resource(From)))),
@@ -1218,28 +1235,48 @@ get_username_and_connection_params(Data) ->
                  end,
     {Username, ConnParams}.
 
-data_to_binary(Data) ->
+data_to_binary(JID, Data) ->
     lists:map(
       fun({username, U}) ->
               {username, iolist_to_binary(U)};
          ({connections_params, Params}) ->
-              {connections_params,
-               lists:map(
-                 fun({S, E}) ->
-                         {iolist_to_binary(S), iolist_to_binary(E)};
-                    ({S, E, Port}) ->
-                         {iolist_to_binary(S), iolist_to_binary(E), Port};
-                    ({S, E, Port, P}) ->
-                         {iolist_to_binary(S), iolist_to_binary(E),
-                          Port, iolist_to_binary(P)}
-                 end, Params)};
+	      {connections_params,
+	       lists:flatmap(
+		 fun(Param) ->
+			 try
+			     [conn_param_to_binary(Param)]
+			 catch _:_ ->
+				 if JID /= error ->
+					 ?ERROR_MSG("failed to convert "
+						    "parameter ~p for user ~s",
+						    [Param,
+						     jlib:jid_to_string(JID)]);
+				    true ->
+					 ?ERROR_MSG("failed to convert "
+						    "parameter ~p",
+						    [Param])
+				 end,
+				 []
+			 end
+		 end, Params)};
          (Opt) ->
               Opt
       end, Data).
 
+conn_param_to_binary({S}) ->
+    {iolist_to_binary(S)};
+conn_param_to_binary({S, E}) ->
+    {iolist_to_binary(S), iolist_to_binary(E)};
+conn_param_to_binary({S, E, Port}) when is_integer(Port) ->
+    {iolist_to_binary(S), iolist_to_binary(E), Port};
+conn_param_to_binary({S, E, Port, P}) when is_integer(Port) ->
+    {iolist_to_binary(S), iolist_to_binary(E), Port, iolist_to_binary(P)}.
+
 conn_params_to_list(Params) ->
     lists:map(
-      fun({S, E}) ->
+      fun({S}) ->
+              {binary_to_list(S)};
+         ({S, E}) ->
               {binary_to_list(S), binary_to_list(E)};
          ({S, E, Port}) ->
               {binary_to_list(S), binary_to_list(E), Port};
@@ -1247,6 +1284,9 @@ conn_params_to_list(Params) ->
               {binary_to_list(S), binary_to_list(E),
                Port, binary_to_list(P)}
       end, Params).
+
+irc_custom_schema() ->
+    {record_info(fields, irc_custom), #irc_custom{}}.
 
 update_table() ->
     Fields = record_info(fields, irc_custom),
@@ -1257,10 +1297,11 @@ update_table() ->
             fun(#irc_custom{us_host = {_, H}}) -> H end,
             fun(#irc_custom{us_host = {{U, S}, H},
                             data = Data} = R) ->
+		    JID = jlib:make_jid(U, S, <<"">>),
                     R#irc_custom{us_host = {{iolist_to_binary(U),
                                              iolist_to_binary(S)},
                                             iolist_to_binary(H)},
-                                 data = data_to_binary(Data)}
+                                 data = data_to_binary(JID, Data)}
             end);
       _ ->
 	  ?INFO_MSG("Recreating irc_custom table", []),
@@ -1300,5 +1341,7 @@ import(_LServer) ->
 
 import(_LServer, mnesia, #irc_custom{} = R) ->
     mnesia:dirty_write(R);
+import(_LServer, riak, #irc_custom{} = R) ->
+    ejabberd_riak:put(R, irc_custom_schema());
 import(_, _, _) ->
     pass.
