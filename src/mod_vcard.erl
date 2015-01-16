@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -47,7 +46,7 @@
 	 lbday, ctry, lctry, locality, llocality, email, lemail,
 	 orgname, lorgname, orgunit, lorgunit}).
 
--record(vcard, {us = {<<"">>, <<"">>} :: {binary(), binary()},
+-record(vcard, {us = {<<"">>, <<"">>} :: {binary(), binary()} | binary(),
                 vcard = #xmlel{} :: xmlel()}).
 
 -define(PROCNAME, ejabberd_mod_vcard).
@@ -187,6 +186,11 @@ process_sm_iq(From, To,
 	    error ->
 		IQ#iq{type = error,
 		      sub_el = [SubEl, ?ERR_INTERNAL_SERVER_ERROR]};
+	    [] ->
+		IQ#iq{type = result,
+		      sub_el = [#xmlel{name = <<"vCard">>,
+			        attrs = [{<<"xmlns">>, ?NS_VCARD}],
+			        children = []}]};
 	    Els -> IQ#iq{type = result, sub_el = Els}
 	  end
     end.
@@ -213,6 +217,15 @@ get_vcard(LUser, LServer, odbc) ->
 	  end;
       {selected, [<<"vcard">>], []} -> [];
       _ -> error
+    end;
+get_vcard(LUser, LServer, riak) ->
+    case ejabberd_riak:get(vcard, vcard_schema(), {LUser, LServer}) of
+        {ok, R} ->
+            [R#vcard.vcard];
+        {error, notfound} ->
+            [];
+        _ ->
+            error
     end.
 
 set_vcard(User, LServer, VCARD) ->
@@ -290,6 +303,34 @@ set_vcard(User, LServer, VCARD) ->
 							lorgunit = LOrgUnit})
 		     end,
 		 mnesia:transaction(F);
+             riak ->
+                 US = {LUser, LServer},
+                 ejabberd_riak:put(#vcard{us = US, vcard = VCARD},
+				   vcard_schema(),
+                                   [{'2i', [{<<"user">>, User},
+                                            {<<"luser">>, LUser},
+                                            {<<"fn">>, FN},
+                                            {<<"lfn">>, LFN},
+                                            {<<"family">>, Family},
+                                            {<<"lfamily">>, LFamily},
+                                            {<<"given">>, Given},
+                                            {<<"lgiven">>, LGiven},
+                                            {<<"middle">>, Middle},
+                                            {<<"lmiddle">>, LMiddle},
+                                            {<<"nickname">>, Nickname},
+                                            {<<"lnickname">>, LNickname},
+                                            {<<"bday">>, BDay},
+                                            {<<"lbday">>, LBDay},
+                                            {<<"ctry">>, CTRY},
+                                            {<<"lctry">>, LCTRY},
+                                            {<<"locality">>, Locality},
+                                            {<<"llocality">>, LLocality},
+                                            {<<"email">>, EMail},
+                                            {<<"lemail">>, LEMail},
+                                            {<<"orgname">>, OrgName},
+                                            {<<"lorgname">>, LOrgName},
+                                            {<<"orgunit">>, OrgUnit},
+                                            {<<"lorgunit">>, LOrgUnit}]}]);
 	     odbc ->
 		 Username = ejabberd_odbc:escape(User),
 		 LUsername = ejabberd_odbc:escape(LUser),
@@ -688,14 +729,18 @@ search(LServer, MatchSpec, AllowReturnAll, odbc) ->
 		 Rs;
 	     Error -> ?ERROR_MSG("~p", [Error]), []
 	   end
-    end.
+    end;
+search(_LServer, _MatchSpec, _AllowReturnAll, riak) ->
+    [].
 
 make_matchspec(LServer, Data, mnesia) ->
     GlobMatch = #vcard_search{_ = '_'},
     Match = filter_fields(Data, GlobMatch, LServer, mnesia),
     Match;
 make_matchspec(LServer, Data, odbc) ->
-    filter_fields(Data, <<"">>, LServer, odbc).
+    filter_fields(Data, <<"">>, LServer, odbc);
+make_matchspec(_LServer, _Data, riak) ->
+    [].
 
 filter_fields([], Match, _LServer, mnesia) -> Match;
 filter_fields([], Match, _LServer, odbc) ->
@@ -885,7 +930,9 @@ remove_user(LUser, LServer, odbc) ->
 				  [[<<"delete from vcard where username='">>,
 				    Username, <<"';">>],
 				   [<<"delete from vcard_search where lusername='">>,
-				    Username, <<"';">>]]).
+				    Username, <<"';">>]]);
+remove_user(LUser, LServer, riak) ->
+    {atomic, ejabberd_riak:delete(vcard, {LUser, LServer})}.
 
 update_tables() ->
     update_vcard_table(),
@@ -930,6 +977,9 @@ update_vcard_search_table() ->
 	  ?INFO_MSG("Recreating vcard_search table", []),
 	  mnesia:transform_table(vcard_search, ignore, Fields)
     end.
+
+vcard_schema() ->
+    {record_info(fields, vcard), #vcard{}}.
 
 export(_Server) ->   
     [{vcard,
@@ -1040,5 +1090,72 @@ import(_LServer, mnesia, #vcard{} = VCard) ->
     mnesia:dirty_write(VCard);
 import(_LServer, mnesia, #vcard_search{} = S) ->
     mnesia:dirty_write(S);
+import(_LServer, riak, #vcard{us = {LUser, _}, vcard = El} = VCard) ->
+    FN = xml:get_path_s(El, [{elem, <<"FN">>}, cdata]),
+    Family = xml:get_path_s(El,
+			    [{elem, <<"N">>}, {elem, <<"FAMILY">>}, cdata]),
+    Given = xml:get_path_s(El,
+			   [{elem, <<"N">>}, {elem, <<"GIVEN">>}, cdata]),
+    Middle = xml:get_path_s(El,
+			    [{elem, <<"N">>}, {elem, <<"MIDDLE">>}, cdata]),
+    Nickname = xml:get_path_s(El,
+			      [{elem, <<"NICKNAME">>}, cdata]),
+    BDay = xml:get_path_s(El,
+			  [{elem, <<"BDAY">>}, cdata]),
+    CTRY = xml:get_path_s(El,
+			  [{elem, <<"ADR">>}, {elem, <<"CTRY">>}, cdata]),
+    Locality = xml:get_path_s(El,
+			      [{elem, <<"ADR">>}, {elem, <<"LOCALITY">>},
+			       cdata]),
+    EMail1 = xml:get_path_s(El,
+			    [{elem, <<"EMAIL">>}, {elem, <<"USERID">>}, cdata]),
+    EMail2 = xml:get_path_s(El,
+			    [{elem, <<"EMAIL">>}, cdata]),
+    OrgName = xml:get_path_s(El,
+			     [{elem, <<"ORG">>}, {elem, <<"ORGNAME">>}, cdata]),
+    OrgUnit = xml:get_path_s(El,
+			     [{elem, <<"ORG">>}, {elem, <<"ORGUNIT">>}, cdata]),
+    EMail = case EMail1 of
+	      <<"">> -> EMail2;
+	      _ -> EMail1
+	    end,
+    LFN = string2lower(FN),
+    LFamily = string2lower(Family),
+    LGiven = string2lower(Given),
+    LMiddle = string2lower(Middle),
+    LNickname = string2lower(Nickname),
+    LBDay = string2lower(BDay),
+    LCTRY = string2lower(CTRY),
+    LLocality = string2lower(Locality),
+    LEMail = string2lower(EMail),
+    LOrgName = string2lower(OrgName),
+    LOrgUnit = string2lower(OrgUnit),
+    ejabberd_riak:put(VCard, vcard_schema(),
+                      [{'2i', [{<<"user">>, LUser},
+                               {<<"luser">>, LUser},
+                               {<<"fn">>, FN},
+                               {<<"lfn">>, LFN},
+                               {<<"family">>, Family},
+                               {<<"lfamily">>, LFamily},
+                               {<<"given">>, Given},
+                               {<<"lgiven">>, LGiven},
+                               {<<"middle">>, Middle},
+                               {<<"lmiddle">>, LMiddle},
+                               {<<"nickname">>, Nickname},
+                               {<<"lnickname">>, LNickname},
+                               {<<"bday">>, BDay},
+                               {<<"lbday">>, LBDay},
+                               {<<"ctry">>, CTRY},
+                               {<<"lctry">>, LCTRY},
+                               {<<"locality">>, Locality},
+                               {<<"llocality">>, LLocality},
+                               {<<"email">>, EMail},
+                               {<<"lemail">>, LEMail},
+                               {<<"orgname">>, OrgName},
+                               {<<"lorgname">>, LOrgName},
+                               {<<"orgunit">>, OrgUnit},
+                               {<<"lorgunit">>, LOrgUnit}]}]);
+import(_LServer, riak, #vcard_search{}) ->
+    ok;
 import(_, _, _) ->
     pass.

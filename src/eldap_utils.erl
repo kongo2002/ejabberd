@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -229,13 +228,28 @@ get_config(Host, Opts) ->
     Base = get_opt({ldap_base, Host}, Opts,
                    fun iolist_to_binary/1,
                    <<"">>),
-    DerefAliases = get_opt({deref_aliases, Host}, Opts,
-                           fun(never) -> never;
-                              (searching) -> searching;
-                              (finding) -> finding;
-                              (always) -> always
-                           end, never),
-    #eldap_config{servers = Servers,
+    OldDerefAliases = get_opt({deref_aliases, Host}, Opts,
+                              fun(never) -> never;
+                                 (searching) -> searching;
+                                 (finding) -> finding;
+                                 (always) -> always
+                              end, unspecified),
+    DerefAliases =
+        if OldDerefAliases == unspecified ->
+                get_opt({ldap_deref_aliases, Host}, Opts,
+                        fun(never) -> never;
+                           (searching) -> searching;
+                           (finding) -> finding;
+                           (always) -> always
+                        end, never);
+           true ->
+                ?WARNING_MSG("Option 'deref_aliases' is deprecated. "
+                             "The option is still supported "
+                             "but it is better to fix your config: "
+                             "use 'ldap_deref_aliases' instead.", []),
+                OldDerefAliases
+        end,
+   #eldap_config{servers = Servers,
                   backups = Backups,
                   tls_options = [{encrypt, Encrypt},
                                  {tls_verify, TLSVerify},

@@ -24,8 +24,9 @@
 {pgsql, @pgsql@}.
 {pam, @pam@}.
 {zlib, @zlib@}.
-{stun, @stun@}.
+{riak, @riak@}.
 {json, @json@}.
+{stun, @stun@}.
 {mongodb, @mongodb@}.
 {http, @http@}.
 {lager, @lager@}.

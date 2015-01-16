@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -51,7 +50,7 @@
 		request_auth,
 		request_keepalive,
 		request_content_length,
-		request_lang = "en",
+		request_lang = <<"en">>,
 		%% XXX bard: request handlers are configured in
 		%% ejabberd.cfg under the HTTP service.	 For example,
 		%% to have the module test_web handle requests with
@@ -66,6 +65,7 @@
 		request_tp,
 		request_headers = [],
 		end_of_request = false,
+		options = [],
 		default_host,
 		trail = <<>>
 	       }).
@@ -134,6 +134,10 @@ init({SockMod, Socket}, Opts) ->
              true -> [{[<<"http-poll">>], ejabberd_http_poll}];
              false -> []
            end,
+    XMLRPC = case proplists:get_bool(xmlrpc, Opts) of
+		 true -> [{[], ejabberd_xmlrpc}];
+		 false -> []
+	     end,
     DefinedHandlers = gen_mod:get_opt(
                         request_handlers, Opts,
                         fun(Hs) ->
@@ -142,7 +146,7 @@ init({SockMod, Socket}, Opts) ->
                                   Mod} || {Path, Mod} <- Hs]
                         end, []),
     RequestHandlers = DefinedHandlers ++ Captcha ++ Register ++
-        Admin ++ Bind ++ Poll,
+        Admin ++ Bind ++ Poll ++ XMLRPC,
     ?DEBUG("S: ~p~n", [RequestHandlers]),
 
     DefaultHost = gen_mod:get_opt(default_host, Opts, fun(A) -> A end, undefined),
@@ -151,6 +155,7 @@ init({SockMod, Socket}, Opts) ->
     State = #state{sockmod = SockMod1,
                    socket = Socket1,
                    default_host = DefaultHost,
+		   options = Opts,
                    request_handlers = RequestHandlers},
     receive_headers(State).
 
@@ -360,7 +365,7 @@ process(Handlers, Request) ->
       false -> process(HandlersLeft, Request)
     end.
 
-process_request(#state{request_method = Method,
+process_request(#state{request_method = Method, options = Options,
 		       request_path = {abs_path, Path}, request_auth = Auth,
 		       request_lang = Lang, request_handlers = RequestHandlers,
 		       request_host = Host, request_port = Port,
@@ -390,6 +395,7 @@ process_request(#state{request_method = Method,
 	    IP = analyze_ip_xff(IPHere, XFF, Host),
 	    Request = #request{method = Method,
 			       path = LPath,
+			       opts = Options,
 			       q = LQuery,
 			       auth = Auth,
 			       lang = Lang,
@@ -414,7 +420,7 @@ process_request(#state{request_method = Method,
 		    make_text_output(State, Status, Headers, Output)
 	    end
     end;
-process_request(#state{request_method = Method,
+process_request(#state{request_method = Method, options = Options,
 		       request_path = {abs_path, Path}, request_auth = Auth,
 		       request_content_length = Len, request_lang = Lang,
 		       sockmod = SockMod, socket = Socket, request_host = Host,
@@ -451,6 +457,7 @@ process_request(#state{request_method = Method,
 	    Request = #request{method = Method,
 			       path = LPath,
 			       q = LQuery,
+			       opts = Options,
 			       auth = Auth,
 			       data = Data,
 			       lang = Lang,

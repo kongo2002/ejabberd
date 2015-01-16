@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -2183,7 +2182,7 @@ get_node(global, Node, [<<"update">>], Query, Lang) ->
 	       ?XCT(<<"h3">>, <<"Update script">>), FmtScript,
 	       ?XCT(<<"h3">>, <<"Low level update script">>),
 	       FmtLowLevelScript, ?XCT(<<"h3">>, <<"Script check">>),
-	       ?XC(<<"pre">>, (iolist_to_binary(Check))),
+	       ?XC(<<"pre">>, (jlib:atom_to_binary(Check))),
 	       ?BR,
 	       ?INPUTT(<<"submit">>, <<"update">>, <<"Update">>)])];
 get_node(Host, Node, NPath, Query, Lang) ->

@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -141,9 +140,12 @@ sql_bloc(Host, F) -> sql_call(Host, {sql_bloc, F}).
 sql_call(Host, Msg) ->
     case get(?STATE_KEY) of
       undefined ->
-	  (?GEN_FSM):sync_send_event(ejabberd_odbc_sup:get_random_pid(Host),
-				     {sql_cmd, Msg, now()},
-				     ?TRANSACTION_TIMEOUT);
+        case ejabberd_odbc_sup:get_random_pid(Host) of
+          none -> {error, <<"Unknown Host">>};
+          Pid ->
+            (?GEN_FSM):sync_send_event(Pid,{sql_cmd, Msg, now()},
+                                       ?TRANSACTION_TIMEOUT)
+          end;
       _State -> nested_op(Msg)
     end.
 
@@ -202,7 +204,7 @@ decode_term(Bin) ->
 %%%----------------------------------------------------------------------
 init([Host, StartInterval]) ->
     case ejabberd_config:get_option(
-           {keepalive_interval, Host},
+           {odbc_keepalive_interval, Host},
            fun(I) when is_integer(I), I>0 -> I end) of
         undefined ->
             ok;
@@ -448,7 +450,7 @@ sql_query_internal(Query) ->
 		?DEBUG("MySQL, Send query~n~p~n", [Query]),  
 		%%squery to be able to specify result_type = binary
 		%%[Query] because p1_mysql_conn expect query to be a list (elements can be binaries, or iolist)
-		%%        but doesn't accept just a binary 
+		%%        but doesn't accept just a binary
 		R = mysql_to_odbc(p1_mysql_conn:squery(State#state.db_ref,
 						   [Query], self(),
 						   [{timeout, (?TRANSACTION_TIMEOUT) - 1000},
@@ -551,10 +553,16 @@ mysql_to_odbc({data, MySQLRes}) ->
     mysql_item_to_odbc(p1_mysql:get_result_field_info(MySQLRes),
 		       p1_mysql:get_result_rows(MySQLRes));
 mysql_to_odbc({error, MySQLRes})
-    when is_binary(MySQLRes) ->
+  when is_binary(MySQLRes) ->
     {error, MySQLRes};
+mysql_to_odbc({error, MySQLRes})
+  when is_list(MySQLRes) ->
+    {error, list_to_binary(MySQLRes)};
 mysql_to_odbc({error, MySQLRes}) ->
-    {error, p1_mysql:get_result_reason(MySQLRes)}.
+    {error, p1_mysql:get_result_reason(MySQLRes)};
+mysql_to_odbc(ok) ->
+    ok.
+
 
 %% When tabular data is returned, convert it to the ODBC formalism
 mysql_item_to_odbc(Columns, Recs) ->
@@ -586,7 +594,7 @@ db_opts(Host) ->
             [odbc, Server];
         _ ->
             Port = ejabberd_config:get_option(
-                     {port, Host},
+                     {odbc_port, Host},
                      fun(P) when is_integer(P), P > 0, P < 65536 -> P end,
                      case Type of
                          mysql -> ?MYSQL_PORT;
