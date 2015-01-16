@@ -108,8 +108,8 @@ esac],[db_type=generic])
 AC_ARG_ENABLE(all,
 [AC_HELP_STRING([--enable-all], [same as --enable-nif --enable-odbc --enable-mysql --enable-pgsql --enable-pam --enable-zlib --enable-riak --enable-json --enable-mongodb --enable-iconv --enable-debug --enable-lager --enable-tools (useful for Dialyzer checks, default: no)])],
 [case "${enableval}" in
-  yes) nif=true odbc=true mysql=true pgsql=true pam=true zlib=true riak=true json=true mongodb=true iconv=true debug=true lager=true tools=true ;;
-  no) nif=false odbc=false mysql=false pgsql=false pam=false zlib=false riak=false json=false mongodb=false iconv=false debug=false lager=false tools=false ;;
+  yes) nif=true odbc=true mysql=true pgsql=true pam=true zlib=true stun=true riak=true json=true mongodb=true iconv=true debug=true http=true lager=true tools=true ;;
+  no) nif=false odbc=false mysql=false pgsql=false pam=false zlib=false stun=false riak=false json=false mongodb=false iconv=false debug=false http=false lager=false tools=false  ;;
   *) AC_MSG_ERROR(bad value ${enableval} for --enable-all) ;;
 esac],[])
 
@@ -248,9 +248,11 @@ AC_SUBST(pam)
 AC_SUBST(zlib)
 AC_SUBST(riak)
 AC_SUBST(json)
+AC_SUBST(stun)
 AC_SUBST(mongodb)
 AC_SUBST(iconv)
 AC_SUBST(debug)
+AC_SUBST(http)
 AC_SUBST(lager)
 AC_SUBST(tools)
 
