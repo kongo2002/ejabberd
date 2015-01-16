@@ -102,8 +102,7 @@ CfgDeps = lists:flatmap(
                ({lager, false}) ->
                     [{p1_logger, ".*", {git, "git://github.com/processone/p1_logger", "c7141aff68282dec46d60a3f39cbf658d0c91961"}}];
                ({mongodb, true}) ->
-                    [{mongodb, ".*", {git, "git://github.com/DarkSideF/mongodb-erlang",
-                    {branch, "master"}}}];
+                    [{mongodb, ".*", {git, "git://github.com/DarkSideF/mongodb-erlang", {branch, "master"}}}];
                (_) ->
                     []
             end, Cfg),
